@@ -77,17 +77,40 @@ enum MeetingNotes {
         문체는 '~다'로 쓴다. 인사말·잡담·같은 말 반복은 버린다.
         """
 
+    /// 어느 단계에 있고 얼마나 왔는지. 메뉴바 고리와 팝오버가 같은 값을 쓴다.
+    struct Progress {
+        enum Stage {
+            case transcribing   // 이 맥 안에서 받아쓰는 중
+            case summarizing    // 받아 적은 글만 AI 모델로 보내는 중
+
+            var title: String {
+                switch self {
+                case .transcribing: return "받아쓰는 중"
+                case .summarizing:  return "요약하는 중"
+                }
+            }
+        }
+        let stage: Stage
+        /// 0~1. nil 이면 얼마나 왔는지 알 수 없다 — 요약은 한 번에 답이 오므로 중간이 없다.
+        let fraction: Double?
+        var text: String {
+            guard let fraction else { return stage.title }
+            return "\(stage.title) \(Int(fraction * 100))%"
+        }
+    }
+
     // MARK: - 한 줄로 엮기
 
     static func make(audio: URL,
-                     onProgress: @escaping (String) -> Void,
+                     onProgress: @escaping (Progress) -> Void,
                      completion: @escaping (Swift.Result<Result, Error>) -> Void) {
-        onProgress("받아쓰는 중…")
+        onProgress(Progress(stage: .transcribing, fraction: 0))
         let transcribeStarted = Date()
         DispatchQueue.global(qos: .userInitiated).async {
             let segments: [Whisper.Segment]
             do {
-                segments = try Whisper.transcribe(audio: audio, model: ModelStore.transcriptionModel)
+                segments = try Whisper.transcribe(audio: audio, model: ModelStore.transcriptionModel,
+                                                  onProgress: { onProgress(Progress(stage: .transcribing, fraction: $0)) })
             } catch {
                 completion(.failure(error))
                 return
@@ -101,7 +124,7 @@ enum MeetingNotes {
                 completion(.failure(Failure.emptyAnswer))
                 return
             }
-            onProgress("요약하는 중… (받아쓴 글자 \(transcript.count))")
+            onProgress(Progress(stage: .summarizing, fraction: nil))
 
             let summarizeStarted = Date()
             summarize(transcript) { result in

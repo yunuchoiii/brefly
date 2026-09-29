@@ -36,6 +36,13 @@ enum Whisper {
         }
     }
 
+    /// 진행률 콜백을 C 로 넘기기 위한 상자. C 함수 포인터는 Swift 클로저를 직접 못 받으므로
+    /// 상자를 user_data 로 넘기고 콜백 안에서 꺼내 쓴다.
+    private final class ProgressBox {
+        let report: (Double) -> Void
+        init(_ report: @escaping (Double) -> Void) { self.report = report }
+    }
+
     /// whisper.cpp 가 요구하는 형식. `MeetingRecorder` 가 처음부터 이 형식으로 남기므로 회의 녹음은 변환이 없다.
     static let sampleRate = 16_000.0
 
@@ -48,8 +55,10 @@ enum Whisper {
     ///
     ///    창마다 낱말 목록을 밀어 넣으면 앞뒤 문맥을 잃고, 첫 창에만 넣어도 전체가 흔들렸다.
     ///    용어 교정은 받아쓴 **뒤에** `Glossary.apply` 로 한다 — 그쪽은 실측으로 다 통했다.
+    /// - Parameter onProgress: 0~1. 회의록은 1~2분이 걸려서 진행률이 없으면 멈춘 줄 안다.
     static func transcribe(audio: URL, model: URL, language: String = "ko",
-                           threads: Int32 = 8) throws -> [Segment] {
+                           threads: Int32 = 8,
+                           onProgress: ((Double) -> Void)? = nil) throws -> [Segment] {
         guard FileManager.default.fileExists(atPath: model.path) else { throw Failure.modelMissing(model) }
         let samples = try monoSamples(audio)
 
@@ -72,10 +81,22 @@ enum Whisper {
         // 진행 표시를 끄지 않으면 whisper.cpp 가 stderr 로 줄줄이 찍는다.
         params.no_timestamps = false
 
+        let progressBox = onProgress.map { ProgressBox($0) }
+        if let progressBox {
+            params.progress_callback = { _, _, percent, userData in
+                guard let userData else { return }
+                Unmanaged<ProgressBox>.fromOpaque(userData).takeUnretainedValue().report(Double(percent) / 100)
+            }
+            params.progress_callback_user_data = Unmanaged.passUnretained(progressBox).toOpaque()
+        }
+
         // ⚠️ C 쪽은 이 포인터를 붙잡고 있는다. 문자열을 그 자리에서 만들어 넘기면 이미 사라진 뒤를 가리킨다.
         return try language.withCString { languagePointer in
             params.language = languagePointer
-            let code = whisper_full(context, params, samples, Int32(samples.count))
+            // ⚠️ 상자를 붙잡아 둔다. 중간에 풀려나면 콜백이 사라진 객체를 가리킨다.
+            let code = withExtendedLifetime(progressBox) {
+                whisper_full(context, params, samples, Int32(samples.count))
+            }
             guard code == 0 else { throw Failure.failed(code) }
 
             var segments: [Segment] = []

@@ -73,11 +73,47 @@ if let i = CommandLine.arguments.firstIndex(of: "--prompt"), i + 1 < CommandLine
     exit(0)
 }
 
+// 화면 확인용: 메뉴바 아이콘의 상태별 모습을 PNG 로 뽑는다. 메뉴바는 캡처로 볼 수 없기 때문이다.
+// 실제 크기는 18pt 라 눈으로 못 보므로 4배로 키워 저장한다.
+if let i = CommandLine.arguments.firstIndex(of: "--render-menubar"), i + 1 < CommandLine.arguments.count {
+    let dir = URL(fileURLWithPath: CommandLine.arguments[i + 1], isDirectory: true)
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let states: [(name: String, progress: Double?, color: NSColor?)] = [
+        ("1-평소",        nil,  nil),
+        ("2-모델받는중-38", 0.38, Theme.coral),
+        ("3-받아쓰는중-42", 0.42, Theme.coral),
+        ("4-요약중-모름",   nil,  Theme.coral),
+        ("5-완료",        1,    Theme.done),
+    ]
+    let side: CGFloat = 72
+    for state in states {
+        for (label, dark) in [("밝은", false), ("어두운", true)] {
+            let icon: NSImage = state.color.map {
+                Logo.menuBarIcon(progress: state.progress, color: $0, dark: dark)
+            } ?? Logo.mark(size: 18, wave: dark ? .white : .black, dot: dark ? .white : .black)
+            let canvas = NSImage(size: NSSize(width: side, height: side))
+            canvas.lockFocus()
+            (dark ? NSColor(white: 0.13, alpha: 1) : NSColor(white: 0.96, alpha: 1)).setFill()
+            NSRect(x: 0, y: 0, width: side, height: side).fill()
+            icon.draw(in: NSRect(x: 0, y: 0, width: side, height: side),
+                      from: .zero, operation: .sourceOver, fraction: 1)
+            canvas.unlockFocus()
+            if let tiff = canvas.tiffRepresentation,
+               let rep = NSBitmapImageRep(data: tiff),
+               let png = rep.representation(using: .png, properties: [:]) {
+                try? png.write(to: dir.appendingPathComponent("\(state.name)-\(label).png"))
+            }
+        }
+    }
+    print("OK \(dir.path)")
+    exit(0)
+}
+
 // 진단용: 녹음 파일 하나를 회의록으로 만든다. 받아쓰기부터 요약까지 한 번에 돈다.
 if let i = CommandLine.arguments.firstIndex(of: "--meeting-notes"), i + 1 < CommandLine.arguments.count {
     let audio = URL(fileURLWithPath: CommandLine.arguments[i + 1])
     let done = DispatchSemaphore(value: 0)
-    MeetingNotes.make(audio: audio, onProgress: { print("  \($0)") }) { result in
+    MeetingNotes.make(audio: audio, onProgress: { print("  \($0.text)") }) { result in
         switch result {
         case .success(let notes):
             print("OK 받아쓰기 \(String(format: "%.1f", notes.transcribeSeconds))초 + 요약 \(String(format: "%.1f", notes.summarizeSeconds))초")
@@ -1111,6 +1147,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func updateStatusTitle() {
         DispatchQueue.main.async {
             guard let button = self.statusItem.button else { return }
+            // 회의록이 도는 동안은 그쪽 진행률이 이긴다. 받아쓰기 상태보다 오래 걸려서
+            // 지금 무엇이 돌고 있는지 알려 주는 쪽이 더 쓸모 있다.
+            if let ring = self.meetingRing {
+                let label = ring.fraction.map { " \(Int($0 * 100))%" } ?? ""
+                button.attributedTitle = NSAttributedString(
+                    string: label, attributes: [.font: NSFont.systemFont(ofSize: 10, weight: .semibold),
+                                                .foregroundColor: ring.color])
+                return
+            }
             switch self.state {
             case .idle:
                 button.attributedTitle = NSAttributedString(string: "")
@@ -1446,6 +1491,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         setState(state, message: Prefs.forceServerRecognition ? "애플 서버 인식 사용" : "온디바이스 인식 우선")
     }
 
+    /// 메뉴바 아이콘의 점 자리에 그릴 진행 고리. nil 이면 평소 모양(템플릿 아이콘)으로 돌아간다.
+    /// 회의록은 1~2분이 걸리는데 메뉴를 닫으면 표시가 없어서 멈춘 줄 안다 — 그래서 아이콘에 남긴다.
+    private var meetingRing: (fraction: Double?, color: NSColor)? {
+        didSet {
+            applyMenuBarIcon()
+            updateStatusTitle()
+        }
+    }
+    /// 끝난 뒤 초록 점을 잠깐 보여 주고 원래대로 돌리는 타이머.
+    private var doneRingTimer: Timer?
+
+    private func applyMenuBarIcon() {
+        guard let button = statusItem?.button else { return }
+        guard let ring = meetingRing else {
+            button.image = Logo.menuBarIcon()
+            return
+        }
+        // 메뉴바는 배경화면에 따라 어두울 수 있다. 앱 모드가 아니라 버튼이 실제로 쓰는 모양새를 본다.
+        let dark = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        button.image = Logo.menuBarIcon(progress: ring.fraction, color: ring.color, dark: dark)
+    }
+
+    /// 다 됐다는 표시를 5초만 보여 준다. 계속 두면 다음에 볼 때 무슨 뜻인지 모른다.
+    private func flashDoneRing() {
+        doneRingTimer?.invalidate()
+        meetingRing = (1, Theme.done)
+        doneRingTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
+            self?.meetingRing = nil
+        }
+    }
+
     // MARK: 녹음 파일로 회의록 만들기
 
     @objc private func summarizeRecording() {
@@ -1482,7 +1558,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         modelDownloader = downloader
         downloader.download(onProgress: { [weak self] progress in
             guard let self else { return }
-            self.setState(self.state, message: "모델 내려받는 중 \(Int(progress.fraction * 100))% (\(progress.text))")
+            DispatchQueue.main.async {
+                self.meetingRing = (progress.fraction, Theme.coral)
+                self.setState(self.state, message: "모델 내려받는 중 \(Int(progress.fraction * 100))% (\(progress.text))")
+            }
         }, completion: { [weak self] result in
             guard let self else { return }
             DispatchQueue.main.async {
@@ -1490,7 +1569,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 self.modelDownloader = nil
                 switch result {
                 case .success: self.makeMeetingNotes(for: url)
-                case .failure(let error): self.setState(self.state, message: error.localizedDescription)
+                case .failure(let error):
+                    self.meetingRing = nil
+                    self.setState(self.state, message: error.localizedDescription)
                 }
             }
         })
@@ -1499,9 +1580,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func makeMeetingNotes(for url: URL) {
         isMakingMeetingNotes = true
         setState(state, message: "회의록 만드는 중…")
-        MeetingNotes.make(audio: url, onProgress: { [weak self] line in
+        MeetingNotes.make(audio: url, onProgress: { [weak self] progress in
             guard let self else { return }
-            self.setState(self.state, message: "회의록: \(line)")
+            DispatchQueue.main.async {
+                self.meetingRing = (progress.fraction, Theme.coral)
+                self.setState(self.state, message: "회의록: \(progress.text)")
+            }
         }, completion: { [weak self] result in
             guard let self else { return }
             DispatchQueue.main.async {
@@ -1509,6 +1593,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 switch result {
                 case .success(let notes): self.finishMeetingNotes(notes, source: url)
                 case .failure(let error):
+                    self.meetingRing = nil
                     self.setState(self.state, message: error.localizedDescription)
                     Log.write("회의록 실패: \(error.localizedDescription)")
                 }
@@ -1539,6 +1624,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let seconds = Int(notes.transcribeSeconds + notes.summarizeSeconds)
         setState(state, message: "회의록을 만들었습니다 (\(seconds)초). 클립보드에도 복사했습니다.")
         Log.write("회의록 완성 — \(target.path), 받아쓰기 \(Int(notes.transcribeSeconds))초 + 요약 \(Int(notes.summarizeSeconds))초")
+        flashDoneRing()
         NSWorkspace.shared.activateFileViewerSelecting([target])
     }
 

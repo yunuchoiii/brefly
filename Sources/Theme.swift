@@ -18,6 +18,7 @@ enum Theme {
     static let inkDeep    = NSColor(hex: 0x101216)
     static let coral      = NSColor(hex: 0xe0604a)   // 레코딩 코랄
     static let amber      = NSColor(hex: 0xe0a24a)   // 정리 중 (코랄과 같은 계열)
+    static let done       = NSColor(hex: 0x3f9c5f)   // 끝남 (밝은·어두운 메뉴바 양쪽에서 보이는 중간 밝기 초록)
     static let coralDeep  = NSColor(hex: 0xc2452f)
     static let coralLight = NSColor(hex: 0xff6b52)
 
@@ -149,6 +150,57 @@ enum Logo {
     static func menuBarIcon() -> NSImage {
         let image = mark(size: 18, wave: .black, dot: .black)
         image.isTemplate = true
+        return image
+    }
+
+
+    /// 메뉴바 아이콘의 **점 자리를 진행 고리로** 바꾼 것.
+    ///
+    /// 회의록은 1~2분이 걸리는데 메뉴를 닫으면 아무 표시가 없어서 멈춘 줄 안다(시안 2-1).
+    /// 로고의 점이 차오르는 모양이라 브랜드와도 이어진다.
+    ///
+    /// ⚠️ 평소 아이콘은 **템플릿**이라 시스템이 밝기에 맞춰 단색으로 칠한다. 색을 쓰려면
+    ///    템플릿을 꺼야 하고, 그러면 밝은 메뉴바와 어두운 메뉴바 양쪽에서 다 보이는 색이어야 한다.
+    ///    코랄과 초록은 둘 다 중간 밝기라 양쪽에서 보인다. 파형은 시스템 색을 따라가지 못하므로
+    ///    현재 메뉴바 밝기를 받아서 직접 칠한다.
+    ///
+    /// - Parameters:
+    ///   - progress: 0~1. nil 이면 얼마나 왔는지 모르는 상태라 고리를 4분의 3만 그린다
+    ///     (요약 단계는 %를 알 수 없다).
+    ///   - color: 고리 색. 처리 중은 코랄, 끝나면 초록.
+    ///   - dark: 메뉴바가 어두운지. 파형 색을 정하는 데 쓴다.
+    static func menuBarIcon(progress: Double?, color: NSColor, dark: Bool) -> NSImage {
+        let size: CGFloat = 18
+        let image = NSImage(size: NSSize(width: size, height: size), flipped: true) { _ in
+            let s = size / viewBox
+            (dark ? NSColor.white : NSColor.black).withAlphaComponent(0.85).setStroke()
+            let wavePath = wave(scale: s)
+            wavePath.stroke()
+
+            let center = CGPoint(x: dotCenter.x * s, y: dotCenter.y * s)
+            // 고리는 점보다 조금 크게 그린다. 점 크기 그대로면 선이 뭉개진다.
+            let radius = dotRadius * s * 1.45
+            let width = max(1.6, dotRadius * s * 0.9)
+
+            // 바탕 고리 — 얼마나 남았는지 보이게 흐리게 깐다.
+            color.withAlphaComponent(0.28).setStroke()
+            let track = NSBezierPath()
+            track.appendArc(withCenter: center, radius: radius, startAngle: 0, endAngle: 360)
+            track.lineWidth = width
+            track.stroke()
+
+            // 찬 만큼 — 12시에서 시계 방향으로.
+            color.setStroke()
+            let filled = NSBezierPath()
+            let sweep = (progress.map { min(max($0, 0), 1) } ?? 0.75) * 360
+            filled.appendArc(withCenter: center, radius: radius,
+                             startAngle: 90, endAngle: 90 - sweep, clockwise: true)
+            filled.lineWidth = width
+            filled.lineCapStyle = .round
+            filled.stroke()
+            return true
+        }
+        image.isTemplate = false
         return image
     }
 
