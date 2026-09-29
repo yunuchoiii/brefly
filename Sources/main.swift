@@ -432,6 +432,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             self?.model.refreshPrefs()
         }
 
+        // 설치하면 앱이 꺼졌다 켜진다. 하던 일이 있으면 끝날 때까지 미룬다.
+        Updater.reportBusy { [weak self] in
+            guard let self else { return false }
+            return self.isMakingMeetingNotes || self.recorder.isRunning
+        }
         registerHotKey()
         Log.write("실행 경로: \(Bundle.main.bundlePath)")
         Log.write("자동 붙여넣기: \(Prefs.autoPaste), 접근성 권한: \(Paster.isTrusted)")
