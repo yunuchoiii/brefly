@@ -258,7 +258,7 @@ enum MeetingNotes {
         let model = Prefs.geminiModel
         guard let url = URL(string:
             "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent") else {
-            completion(.failure(Failure.badResponse(0, "주소를 만들지 못했습니다")))
+            completion(.failure(Failure.badResponse(0, "주소를 만들지 못했습니다.")))
             return
         }
 

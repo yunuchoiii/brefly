@@ -94,6 +94,9 @@ final class AppModel: ObservableObject {
     @Published var elapsed: TimeInterval = 0
     /// 최근 파형 레벨. [0]이 가장 새 값. 0…1.
     @Published var levels: [Float] = Array(repeating: 0, count: 11)
+    /// 회의 녹음용. 받아쓰기와 따로 두는 이유는 화상일 때 두 줄(나·상대)을 함께 보여 주기 때문이다.
+    @Published var meetingMicLevels: [Float] = Array(repeating: 0, count: 11)
+    @Published var meetingSystemLevels: [Float] = Array(repeating: 0, count: 11)
     @Published var partialText = ""
 
     // 완료 화면
@@ -134,6 +137,7 @@ final class AppModel: ObservableObject {
         var startMeetingInPerson: () -> Void = {}
         var startMeetingVideoCall: () -> Void = {}
         var stopMeetingRecording: () -> Void = {}
+        var cancelMeetingRecording: () -> Void = {}
         var openSettings: () -> Void = {}
         var quit: () -> Void = {}
         var copy: (SummaryRecord) -> Void = { _ in }

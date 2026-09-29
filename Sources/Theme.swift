@@ -433,3 +433,34 @@ struct BreflyLoader: View {
     private func easeOut(_ t: Double) -> Double { 1 - pow(1 - t, 3) }
     private func easeIn(_ t: Double) -> Double { t * t * t }
 }
+
+struct AudioFileIcon: Shape {
+    func path(in rect: CGRect) -> Path {
+        let s = min(rect.width, rect.height) / 24
+        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: rect.minX + x * s, y: rect.minY + y * s)
+        }
+        var path = Path()
+
+        // 문서 — 오른쪽 위 귀퉁이를 접는다
+        path.move(to: p(5, 2.5))
+        path.addLine(to: p(14, 2.5))
+        path.addLine(to: p(19, 7.5))
+        path.addLine(to: p(19, 21.5))
+        path.addLine(to: p(5, 21.5))
+        path.closeSubpath()
+        path.move(to: p(14, 2.5))
+        path.addLine(to: p(14, 7.5))
+        path.addLine(to: p(19, 7.5))
+
+        // 헤드폰 — 머리띠와 양쪽 귀
+        path.addArc(center: p(12, 15.2), radius: 4.1 * s,
+                    startAngle: .degrees(180), endAngle: .degrees(360), clockwise: false)
+        for x in [7.9, 16.1] as [CGFloat] {
+            path.addRoundedRect(in: CGRect(x: p(x - 0.9, 15).x, y: p(x - 0.9, 15).y,
+                                           width: 1.9 * s, height: 3.4 * s),
+                                cornerSize: CGSize(width: 0.95 * s, height: 0.95 * s))
+        }
+        return path
+    }
+}
