@@ -70,7 +70,11 @@ struct IdleView: View {
             .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 12)
 
             HStack(spacing: 10) {
-                Text("핵심 요약").font(.system(size: 13, weight: .semibold)).foregroundColor(.ink)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("핵심 요약").font(.system(size: 13, weight: .semibold)).foregroundColor(.ink)
+                    Text("요점만 불릿 목록으로 정리합니다")
+                        .font(.system(size: 11)).foregroundColor(.text3)
+                }
                 Spacer()
                 Toggle("", isOn: Binding(get: { model.summaryOn }, set: { model.actions.setSummary($0) }))
                     .toggleStyle(.switch).labelsHidden().controlSize(.small)
@@ -111,9 +115,10 @@ struct IdleView: View {
             HairLine()
 
             HStack(spacing: 14) {
-                Button("설정", action: model.actions.openSettings).buttonStyle(.plain)
-                Button("회의록", action: model.actions.makeMeetingNotes).buttonStyle(.plain)
+                Button("회의록 만들기…", action: model.actions.makeMeetingNotes)
+                    .buttonStyle(.plain).fontWeight(.semibold).foregroundColor(.ink)
                 Spacer()
+                Button("설정…", action: model.actions.openSettings).buttonStyle(.plain)
                 Button("종료", action: model.actions.quit).buttonStyle(.plain)
             }
             .font(.system(size: 12)).foregroundColor(.text3)

@@ -688,6 +688,17 @@ enum PolishStyle: String, CaseIterable {
         }
     }
 
+    /// 라디오 목록에 붙는 한 줄 설명. 제목만 있으면 "격식체"가 무엇인지 알 수 없다.
+    var detail: String {
+        switch self {
+        case .standard: return "군더더기를 빼고 문장을 다듬습니다"
+        case .formal:   return "보고서·이메일에 맞는 말투로 바꿉니다"
+        case .casual:   return "메신저처럼 말한 느낌을 살립니다"
+        case .verbatim: return "맞춤법과 띄어쓰기만 고칩니다"
+        case .summary:  return "요점만 불릿 목록으로 뽑습니다 · 팝오버에서도 바로 켜고 끕니다"
+        }
+    }
+
     var instruction: String {
         switch self {
         case .standard:

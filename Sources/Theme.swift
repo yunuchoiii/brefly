@@ -31,6 +31,8 @@ enum Theme {
     static let text2      = NSColor(hex: 0x6f7580)
     static let text3      = NSColor(hex: 0x8b909a)
     static let text4      = NSColor(hex: 0xa6acb8)
+    /// 선택 안 된 라디오 테두리. 기존 선 색(0xdcdfe4)은 흰 바탕에서 1.3:1 이라 거의 안 보인다.
+    static let radioOff   = NSColor(hex: 0x8b909a)
 
     // 완료 토스트
     static let green       = NSColor(hex: 0x3f9e6e)
@@ -81,6 +83,7 @@ extension Color {
     static let fill       = Color(nsColor: Theme.dyn(Theme.fill, Theme.darkFill))
     static let line       = Color(nsColor: Theme.dyn(Theme.line, Theme.darkHair))
     static let lineStrong = Color(nsColor: Theme.dyn(Theme.lineStrong, Theme.darkLine))
+    static let radioOff   = Color(nsColor: Theme.dyn(Theme.radioOff, Theme.darkSub))
     static let text2      = Color(nsColor: Theme.dyn(Theme.text2, Theme.darkText))
     static let text3      = Color(nsColor: Theme.dyn(Theme.text3, Theme.darkSub))
     static let text4      = Color(nsColor: Theme.dyn(Theme.text4, Theme.darkMuted))
