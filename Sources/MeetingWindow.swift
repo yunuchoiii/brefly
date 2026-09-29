@@ -125,7 +125,7 @@ struct MeetingResultView: View {
             tabButton("받아쓴 원문", .transcript)
             Spacer()
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 20).padding(.top, 10)
     }
 
     private func tabButton(_ title: String, _ value: Tab) -> some View {

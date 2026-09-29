@@ -343,6 +343,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var meetingCancel: CancelToken?
     /// 메뉴에 보여 줄 진행 문구. 메뉴를 열었을 때 어디쯤인지 알 수 있어야 한다.
     private var meetingProgressLine: String?
+    /// 마지막 진행 상태. 팝오버를 닫거나 그 사이 받아쓰기를 하면 회의록 화면이 덮이는데,
+    /// 그때 "진행 상황 보기"로 되돌아오려면 들고 있어야 한다.
+    private var meetingRun: AppModel.MeetingRun?
     private var partialText = ""
 
     // 팝오버(시안 1a/1b/1c)
@@ -1240,6 +1243,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                                   action: nil, keyEquivalent: "")
             line.isEnabled = false
             menu.addItem(line)
+            let showItem = NSMenuItem(title: "진행 상황 보기",
+                                      action: #selector(showMeetingProgress), keyEquivalent: "")
+            showItem.target = self
+            menu.addItem(showItem)
             let cancelItem = NSMenuItem(title: "회의록 만들기 취소",
                                         action: #selector(cancelMeetingNotes), keyEquivalent: "")
             cancelItem.target = self
@@ -1662,6 +1669,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         var run = AppModel.MeetingRun(fileName: url.lastPathComponent,
                                       audioSeconds: seconds.isFinite && seconds > 0 ? seconds : nil,
                                       startedAt: Date())
+        meetingRun = run
         model.phase = .meeting(run)
         // 시안 2-1 의 (나). 시작할 때 한 번 열어 주고, 닫으면 메뉴바 고리가 이어받는다.
         showPopover()
@@ -1673,6 +1681,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 self.meetingProgressLine = progress.text
                 run.stage = progress.stage
                 run.fraction = progress.fraction
+                self.meetingRun = run
+                // 그 사이 받아쓰기를 시작했으면 그 화면을 덮지 않는다. 되돌아오는 길은 메뉴에 둔다.
                 if case .meeting = self.model.phase { self.model.phase = .meeting(run) }
                 self.setState(self.state, message: "회의록: \(progress.text)")
             }
@@ -1682,6 +1692,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 self.isMakingMeetingNotes = false
                 self.meetingCancel = nil
                 self.meetingProgressLine = nil
+                self.meetingRun = nil
                 // 회의록 화면을 띄워 놨으면 내린다. 그 사이 사용자가 녹음을 시작했으면 건드리지 않는다.
                 if case .meeting = self.model.phase { self.model.phase = .idle }
                 switch result {
@@ -1730,6 +1741,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             duration: audioSeconds.isFinite && audioSeconds > 0 ? audioSeconds : nil,
             notes: notes.notes,
             segments: notes.segments))
+    }
+
+    /// 팝오버를 닫았거나 그 사이 받아쓰기를 해서 회의록 화면이 덮였을 때 되돌아온다.
+    @objc private func showMeetingProgress() {
+        guard let run = meetingRun else { return }
+        // 녹음 중이면 건드리지 않는다. 말하는 도중에 화면이 바뀌면 그게 더 곤란하다.
+        guard !recorder.isRunning else {
+            setState(state, message: "녹음을 마친 뒤에 볼 수 있습니다")
+            return
+        }
+        model.phase = .meeting(run)
+        showPopover()
     }
 
     @objc private func cancelMeetingNotes() {
