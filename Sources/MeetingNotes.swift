@@ -93,7 +93,10 @@ enum MeetingNotes {
                 return
             }
             let transcribeSeconds = Date().timeIntervalSince(transcribeStarted)
-            let transcript = segments.map(\.text).joined(separator: " ")
+            // 미리 알려 줬어도 놓치는 것이 있다. 받아쓰기 쪽과 같은 용어집으로 한 번 더 훑는다.
+            let heard = segments.map(\.text).joined(separator: " ")
+            let transcript = Glossary.apply(to: heard)
+            if transcript != heard { Log.write("회의록 용어 치환 적용") }
             guard transcript.count > 30 else {
                 completion(.failure(Failure.emptyAnswer))
                 return

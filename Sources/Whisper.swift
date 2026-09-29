@@ -39,6 +39,15 @@ enum Whisper {
     /// whisper.cpp 가 요구하는 형식. `MeetingRecorder` 가 처음부터 이 형식으로 남기므로 회의 녹음은 변환이 없다.
     static let sampleRate = 16_000.0
 
+    /// ⚠️ **`initial_prompt` 로 용어를 미리 알려 주지 말 것.** 그럴듯해 보이지만 한국어 긴 녹음에서는
+    ///    오히려 망가진다. 같은 20분 녹음으로 잰 값이다(2026-09-29).
+    ///
+    ///      안 넣음                   대원CTS 5번, 9,871자
+    ///      넣고 carry_initial_prompt  대원CTS 0번(대형 CTS·대한민국으로 들림), 9,557자
+    ///      넣고 carry 끔              대원CTS 0번, 모의해킹도 0번, 10,367자
+    ///
+    ///    창마다 낱말 목록을 밀어 넣으면 앞뒤 문맥을 잃고, 첫 창에만 넣어도 전체가 흔들렸다.
+    ///    용어 교정은 받아쓴 **뒤에** `Glossary.apply` 로 한다 — 그쪽은 실측으로 다 통했다.
     static func transcribe(audio: URL, model: URL, language: String = "ko",
                            threads: Int32 = 8) throws -> [Segment] {
         guard FileManager.default.fileExists(atPath: model.path) else { throw Failure.modelMissing(model) }
