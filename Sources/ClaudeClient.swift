@@ -320,7 +320,7 @@ enum Prompts {
         형식:
         - 불릿("- ") 한 줄에 요점 하나. 보통 1~6개. 원문이 한 문장짜리면 불릿 하나로 충분하다.
         - 각 불릿은 짧게. 군더더기 어미 대신 개조식(명사형, "~함", "~하기", "~예정")이나 짧은 문장으로 끝낸다.
-        - 불릿 목록만 출력한다. 제목, 머리말, 굵게 표시, 설명, 인사를 붙이지 않는다.
+        - 목록 형태만 출력한다. 제목, 머리말, 굵게 표시, 설명, 인사를 붙이지 않는다.
 
         내용:
         - 결정, 할 일, 일정, 숫자, 요청, 이유처럼 나중에 다시 찾아볼 정보를 남긴다.
@@ -684,7 +684,18 @@ enum PolishStyle: String, CaseIterable {
         case .formal:   return "격식체 (보고·이메일)"
         case .casual:   return "구어체 유지 (메신저)"
         case .verbatim: return "원문 최소 손질"
-        case .summary:  return "핵심 요약 (불릿 목록)"
+        case .summary:  return "핵심 요약 (목록 형태)"
+        }
+    }
+
+    /// 라디오 목록에 붙는 한 줄 설명. 제목만 있으면 "격식체"가 무엇인지 알 수 없다.
+    var detail: String {
+        switch self {
+        case .standard: return "군더더기를 빼고 문장을 다듬습니다"
+        case .formal:   return "보고서·이메일에 맞는 말투로 바꿉니다"
+        case .casual:   return "메신저처럼 말한 느낌을 살립니다"
+        case .verbatim: return "맞춤법과 띄어쓰기만 고칩니다"
+        case .summary:  return "요점만 목록 형태로 뽑습니다 · 팝오버에서도 바로 켜고 끕니다"
         }
     }
 

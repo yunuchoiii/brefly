@@ -74,6 +74,41 @@ enum PreviewRenderer {
         model.polishNote = "gemini-3.1-flash-lite 응답이 늦어 gemini-3.6-flash 에도 요청 중…"
         snap("polishing")
 
+        // 회의록 처리 중. 받아쓰기(1단계)와 요약(2단계)을 각각 본다 — 단계마다 표시가 달라진다.
+        model.phase = .meeting(AppModel.MeetingRun(
+            fileName: "주간 기획 회의.m4a", audioSeconds: 2112,
+            startedAt: Date().addingTimeInterval(-34), stage: .transcribing, fraction: 0.42))
+        snap("1d-meeting-transcribing")
+
+        model.phase = .meeting(AppModel.MeetingRun(
+            fileName: "주간 기획 회의.m4a", audioSeconds: 2112,
+            startedAt: Date().addingTimeInterval(-96), stage: .summarizing, fraction: nil))
+        snap("1d-meeting-summarizing")
+
+        // 회의록 탭. 시작 방법 셋과 최근 목록이 보여야 한다.
+        model.meetingHistory = [
+            MeetingRecord(id: "a", title: "주간 기획 회의",
+                          date: Date().addingTimeInterval(-86400), kind: .videoCall,
+                          seconds: 2112, todoCount: 3, notesPath: "/tmp/a.md", audioPath: "/tmp/a.m4a"),
+            MeetingRecord(id: "b", title: "고객 인터뷰 — 3차",
+                          date: Date().addingTimeInterval(-86400 * 5), kind: .file,
+                          seconds: 3120, todoCount: 0, notesPath: "/tmp/b.md", audioPath: "/tmp/b.m4a"),
+        ]
+        // ⚠️ 앞 단계에서 phase 가 남아 있으면 그 화면이 이긴다. 대기로 돌려놓고 찍는다.
+        model.phase = .idle
+        model.tab = .meeting
+        snap("1f-meeting-tab")
+        model.tab = .dictation
+
+        // 회의를 지금 녹음하는 중. 시스템 소리를 못 잡는 경우도 같이 본다 —
+        // 그때는 화상회의에서 내 말만 남으므로 경고가 보여야 한다.
+        model.phase = .meetingRecording(AppModel.MeetingRecordingRun(
+            startedAt: Date().addingTimeInterval(-372), capturingSystem: true, inPerson: false))
+        snap("1e-meeting-recording-video")
+        model.phase = .meetingRecording(AppModel.MeetingRecordingRun(
+            startedAt: Date().addingTimeInterval(-372), capturingSystem: false, inPerson: true))
+        snap("1e-meeting-recording-in-person")
+
         model.retryRecord = samples[0]
         model.phase = .error("정리에 실패해서 원문을 그대로 복사했어요\n\n"
             + APIErrorText.describe(service: "Gemini", code: 503,
@@ -88,6 +123,37 @@ enum PreviewRenderer {
         model.screen = .main
         model.history = []
         snap("1a-idle-empty")
+
+        // 회의록 결과 창. 팝오버가 아니라 일반 창이라 크기를 못 박아 그린다.
+        let sampleNotes = """
+        ## 한 줄 요약
+        출시 일정을 그대로 두고, 설치 안내는 단계를 늘리지 않는 쪽으로 정리하기로 했다.
+
+        ## 결정된 것
+        - 다음 달 14일 출시 일정 유지
+        - 설치 안내에 새 단계를 추가하지 않음
+
+        ## 할 일
+        - 처리 중 화면 시안 확정
+        - 내려받기 안내 문구 검토
+
+        ## 논의한 것
+        - 처리 중에 창을 닫으면 멈춘 것처럼 보인다는 의견
+        """
+        let sampleSegments: [Whisper.Segment] = [
+            .init(text: "자, 그럼 시작하겠습니다. 오늘은 두 가지만 보면 될 것 같아요.", start: 0, end: 4.2),
+            .init(text: "출시는 그대로 가는 거죠? 회의록 기능까지 포함해서요.", start: 42, end: 46.5),
+            .init(text: "네, 그건 확정이고요. 문제는 처리 중 화면입니다.", start: 75, end: 79.1),
+            .init(text: "창을 닫으면 아무것도 안 보여서 멈춘 줄 아시더라고요.", start: 123, end: 127.4),
+        ]
+        let sampleDoc = MeetingDocument(
+            title: "주간 기획 회의", audio: URL(fileURLWithPath: "/Users/me/문서/회의/주간 기획 회의.m4a"),
+            notesFile: URL(fileURLWithPath: "/Users/me/문서/회의/주간 기획 회의 회의록.md"),
+            recordedAt: Date(), duration: 2112, notes: sampleNotes, segments: sampleSegments)
+        write(render(MeetingResultView(document: sampleDoc).frame(width: 820, height: 600)),
+              to: dir.appendingPathComponent("3-meeting-result.png"))
+        write(render(MeetingResultView(document: sampleDoc).frame(width: 820, height: 600), dark: true),
+              to: dir.appendingPathComponent("dark-3-meeting-result.png"))
 
         let settings = SettingsModel()
         settings.usageContexts = [.devFrontend, .devMobile]

@@ -1,5 +1,6 @@
 import AppKit
 import Speech
+import UniformTypeIdentifiers
 import SwiftUI
 import Combine
 
@@ -72,6 +73,297 @@ if let i = CommandLine.arguments.firstIndex(of: "--prompt"), i + 1 < CommandLine
     exit(0)
 }
 
+// 화면 확인용: 메뉴바 아이콘의 상태별 모습을 PNG 로 뽑는다. 메뉴바는 캡처로 볼 수 없기 때문이다.
+// 실제 크기는 18pt 라 눈으로 못 보므로 4배로 키워 저장한다.
+if let i = CommandLine.arguments.firstIndex(of: "--render-menubar"), i + 1 < CommandLine.arguments.count {
+    let dir = URL(fileURLWithPath: CommandLine.arguments[i + 1], isDirectory: true)
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    // 로더 애니메이션 프레임. 경로를 잘라 그리므로 중간이 끊기지 않는지 눈으로 봐야 한다.
+    for frame in stride(from: 0.0, to: 96.0, by: 12.0) {
+        for (label, dark) in [("밝은", false), ("어두운", true)] {
+            let icon = Logo.menuBarLoader(frame: frame, dark: dark)
+            let canvasSide: CGFloat = 72
+            let canvas = NSImage(size: NSSize(width: canvasSide, height: canvasSide))
+            canvas.lockFocus()
+            (dark ? NSColor(white: 0.13, alpha: 1) : NSColor(white: 0.96, alpha: 1)).setFill()
+            NSRect(x: 0, y: 0, width: canvasSide, height: canvasSide).fill()
+            icon.draw(in: NSRect(x: 0, y: 0, width: canvasSide, height: canvasSide),
+                      from: .zero, operation: .sourceOver, fraction: 1)
+            canvas.unlockFocus()
+            if let tiff = canvas.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+               let png = rep.representation(using: .png, properties: [:]) {
+                try? png.write(to: dir.appendingPathComponent(String(format: "loader-%02.0f-\(label).png", frame)))
+            }
+        }
+    }
+
+    let states: [(name: String, progress: Double?, kind: AppDelegate.RingKind?)] = [
+        ("1-평소",        nil,  nil),
+        ("1b-녹음중",     nil,  .recording),
+        ("2-0퍼센트",     0,    .working),
+        ("3-받아쓰는중-42", 0.42, .working),
+        ("4-요약중-모름",   nil,  .working),
+        ("5-완료",        1,    .done),
+    ]
+    let side: CGFloat = 72
+    for state in states {
+        for (label, dark) in [("밝은", false), ("어두운", true)] {
+            // 상태마다 그리는 것이 다르다. 녹음 중은 멈춘 로고, 처리 중은 로더, 끝남은 고리다.
+            let icon: NSImage
+            switch state.kind {
+            case .none:
+                icon = Logo.mark(size: 18, wave: dark ? .white : .black, dot: dark ? .white : .black)
+            case .recording:
+                icon = Logo.mark(size: 18, wave: dark ? .white : NSColor(white: 0.1, alpha: 1),
+                                 dot: Theme.coral)
+            case .working:
+                icon = Logo.menuBarLoader(frame: 60, dark: dark)
+            case .done:
+                icon = Logo.menuBarIcon(progress: 1, color: Theme.done, dark: dark)
+            }
+            // ⚠️ 진행 고리가 붙은 아이콘은 가로가 더 넓다. 정사각에 욱여넣으면 일그러져서
+            //    실제와 다른 그림을 보게 된다 — 진단이 거짓말하면 없느니만 못하다.
+            let scale = side / icon.size.height
+            let w = icon.size.width * scale
+            let canvas = NSImage(size: NSSize(width: w, height: side))
+            canvas.lockFocus()
+            (dark ? NSColor(white: 0.13, alpha: 1) : NSColor(white: 0.96, alpha: 1)).setFill()
+            NSRect(x: 0, y: 0, width: w, height: side).fill()
+            icon.draw(in: NSRect(x: 0, y: 0, width: w, height: side),
+                      from: .zero, operation: .sourceOver, fraction: 1)
+            canvas.unlockFocus()
+            if let tiff = canvas.tiffRepresentation,
+               let rep = NSBitmapImageRep(data: tiff),
+               let png = rep.representation(using: .png, properties: [:]) {
+                try? png.write(to: dir.appendingPathComponent("\(state.name)-\(label).png"))
+            }
+        }
+    }
+    print("OK \(dir.path)")
+    exit(0)
+}
+
+// 진단용: 두 트랙을 받아쓰고 에코를 거른 결과만 본다. 요약은 안 부른다 —
+// 에코가 걸러졌는지만 보고 싶은데 요약까지 가면 길이 제한에 막혀 아무것도 못 본다.
+if let i = CommandLine.arguments.firstIndex(of: "--echo-check"), i + 1 < CommandLine.arguments.count {
+    let folder = URL(fileURLWithPath: CommandLine.arguments[i + 1], isDirectory: true)
+    let model = ModelStore.transcriptionModel
+    func read(_ name: String) -> [Whisper.Segment] {
+        let url = folder.appendingPathComponent(name)
+        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+        return (try? Whisper.transcribe(audio: url, model: model)) ?? []
+    }
+    let mic = read("mic.wav"), system = read("system.wav")
+    print("마이크 구간 \(mic.count)개:")
+    for s in mic { print("   \(String(format: "%6.2f", s.start))  \(s.text)") }
+    print("시스템 구간 \(system.count)개:")
+    for s in system { print("   \(String(format: "%6.2f", s.start))  \(s.text)") }
+    let kept = EchoFilter.removeEcho(mic: mic, system: system)
+    print("에코를 뺀 뒤 마이크 구간 \(kept.count)개 (\(mic.count - kept.count)개 걸러짐):")
+    for s in kept { print("   \(String(format: "%6.2f", s.start))  \(s.text)") }
+    print("--- 합친 것 ---")
+    print(EchoFilter.merge(mic: mic, system: system))
+    exit(0)
+}
+
+// 진단용: 이미 녹음해 둔 회의 폴더(mic.wav + system.wav)로 회의록을 만든다.
+// 에코가 실제로 걸러지는지 보려면 두 트랙이 다 있는 폴더가 필요하다.
+if let i = CommandLine.arguments.firstIndex(of: "--meeting-tracks"), i + 1 < CommandLine.arguments.count {
+    let folder = URL(fileURLWithPath: CommandLine.arguments[i + 1], isDirectory: true)
+    let mic = folder.appendingPathComponent("mic.wav")
+    let system = folder.appendingPathComponent("system.wav")
+    let hasSystem = FileManager.default.fileExists(atPath: system.path)
+    let done = DispatchSemaphore(value: 0)
+    MeetingNotes.makeFromTracks(mic: mic, system: hasSystem ? system : nil, recordedAt: Date(),
+                                onProgress: { print("  \($0.text)") }) { result in
+        switch result {
+        case .success(let notes):
+            print("OK 받아쓰기 \(String(format: "%.1f", notes.transcribeSeconds))초")
+            print("--- 합친 원문 ---")
+            print(notes.transcript)
+            print("--- 회의록 ---")
+            print(notes.notes)
+        case .failure(let error):
+            print("FAIL \(error.localizedDescription)")
+        }
+        done.signal()
+    }
+    _ = done.wait(timeout: .now() + 1800)
+    exit(0)
+}
+
+// 진단용: 녹음 파일 하나를 회의록으로 만든다. 받아쓰기부터 요약까지 한 번에 돈다.
+if let i = CommandLine.arguments.firstIndex(of: "--meeting-notes"), i + 1 < CommandLine.arguments.count {
+    let audio = URL(fileURLWithPath: CommandLine.arguments[i + 1])
+    let done = DispatchSemaphore(value: 0)
+    // 진단용: --cancel-after <초> 로 중간에 멈춰 본다. 취소가 안 먹으면 사용자가 갇힌다.
+    let token = CancelToken()
+    if let j = CommandLine.arguments.firstIndex(of: "--cancel-after"), j + 1 < CommandLine.arguments.count,
+       let after = Double(CommandLine.arguments[j + 1]) {
+        DispatchQueue.global().asyncAfter(deadline: .now() + after) {
+            print("  \(after)초 지나 취소를 누른다")
+            token.cancel()
+        }
+    }
+    MeetingNotes.make(audio: audio, cancel: token, onProgress: { print("  \($0.text)") }) { result in
+        switch result {
+        case .success(let notes):
+            print("OK 받아쓰기 \(String(format: "%.1f", notes.transcribeSeconds))초 + 요약 \(String(format: "%.1f", notes.summarizeSeconds))초")
+            print("   원문 \(notes.transcript.count)자 → 회의록 \(notes.notes.count)자\n")
+            print(notes.notes)
+            try? notes.notes.write(toFile: "/tmp/brefly-meeting.md", atomically: true, encoding: .utf8)
+            try? notes.transcript.write(toFile: "/tmp/brefly-meeting-raw.txt", atomically: true, encoding: .utf8)
+        case .failure(let error):
+            print("FAIL \(error.localizedDescription)")
+        }
+        done.signal()
+    }
+    _ = done.wait(timeout: .now() + 1800)
+    exit(0)
+}
+
+// 진단용: 받아쓰기 모델을 내려받는다. 547MB 라 진행률을 보여 준다.
+if CommandLine.arguments.contains("--fetch-model") {
+    let done = DispatchSemaphore(value: 0)
+    let downloader = ModelDownloader()
+    var lastShown = -1
+    downloader.download(onProgress: { progress in
+        let percent = Int(progress.fraction * 100)
+        if percent != lastShown, percent % 5 == 0 {
+            lastShown = percent
+            print("  \(percent)%  \(progress.text)")
+        }
+    }, completion: { result in
+        switch result {
+        case .success(let url):
+            let size = ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int64) ?? 0
+            print("OK \(url.path) (\(size / 1_048_576)MB)")
+        case .failure(let error):
+            print("FAIL \(error.localizedDescription)")
+        }
+        done.signal()
+    })
+    _ = done.wait(timeout: .now() + 1800)
+    exit(0)
+}
+
+// 진단용: whisper.cpp 로 소리 파일을 받아쓴다. --model 로 모델 파일을 가리킨다.
+if let i = CommandLine.arguments.firstIndex(of: "--whisper"), i + 1 < CommandLine.arguments.count {
+    let audio = URL(fileURLWithPath: CommandLine.arguments[i + 1])
+    let model: URL = CommandLine.arguments.firstIndex(of: "--model").flatMap { j in
+        j + 1 < CommandLine.arguments.count ? URL(fileURLWithPath: CommandLine.arguments[j + 1]) : nil
+    } ?? ModelStore.transcriptionModel
+    let started = Date()
+    do {
+        let segments = try Whisper.transcribe(audio: audio, model: model)
+        let took = Date().timeIntervalSince(started)
+        let text = segments.map(\.text).joined(separator: " ")
+        print("OK \(String(format: "%.1f", took))초, 구간 \(segments.count)개, 글자 \(text.count)")
+        for s in segments.prefix(3) {
+            print("  \(String(format: "%6.2f", s.start))~\(String(format: "%.2f", s.end))초: \(s.text.prefix(40))")
+        }
+        let out = "/tmp/brefly-whisper.txt"
+        try? text.write(toFile: out, atomically: true, encoding: .utf8)
+        print("전문: \(out)")
+    } catch {
+        print("FAIL \(error.localizedDescription)")
+    }
+    exit(0)
+}
+
+// 진단용: 마이크와 시스템 소리를 함께 회의 녹음한다. 두 갈래가 제대로 갈려 들어오는지 본다.
+if let i = CommandLine.arguments.firstIndex(of: "--record-meeting"), i + 1 < CommandLine.arguments.count {
+    let seconds = Double(CommandLine.arguments[i + 1]) ?? 10
+    let done = DispatchSemaphore(value: 0)
+    Task {
+        let recorder = MeetingRecorder()
+        do {
+            let session = try await recorder.start()
+            if let e = recorder.systemAudioError { print("주의: 시스템 소리 없음 — \(e.localizedDescription)") }
+            print("\(seconds)초 동안 녹음합니다 — \(session.directory.path)")
+            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            await recorder.stop()
+            func size(_ url: URL) -> String {
+                let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+                return "\((bytes ?? 0) / 1024)KB"
+            }
+            print("마이크  \(recorder.micBuffers)조각  \(size(session.mic))")
+            print("시스템  \(recorder.systemBuffers)조각  \(size(session.system))")
+            print(recorder.micBuffers > 0 ? "OK \(session.directory.path)" : "FAIL 마이크가 하나도 안 들어왔습니다")
+        } catch {
+            print("FAIL \(error.localizedDescription)")
+        }
+        done.signal()
+    }
+    _ = done.wait(timeout: .now() + seconds + 60)
+    exit(0)
+}
+
+// 진단용: 스피커로 나가는 소리를 잡아 WAV 로 남긴다. 화상회의 상대방 목소리가 실제로 들어오는지 본다.
+if let i = CommandLine.arguments.firstIndex(of: "--capture-system-audio"), i + 2 < CommandLine.arguments.count {
+    let seconds = Double(CommandLine.arguments[i + 1]) ?? 10
+    let out = URL(fileURLWithPath: CommandLine.arguments[i + 2])
+    let done = DispatchSemaphore(value: 0)
+    Task {
+        let recorder = SystemAudioRecorder()
+        var file: AVAudioFile?
+        recorder.onBuffer = { buffer in
+            if file == nil {
+                file = try? AVAudioFile(forWriting: out, settings: buffer.format.settings,
+                                        commonFormat: .pcmFormatFloat32, interleaved: false)
+            }
+            try? file?.write(from: buffer)
+        }
+        do {
+            try await recorder.start()
+            print("\(seconds)초 동안 잡습니다 — 지금 소리를 내 보세요")
+            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            await recorder.stop()
+            print("버퍼 \(recorder.buffers)개, 최대 진폭 \(String(format: "%.4f", recorder.peak))")
+            if recorder.buffers == 0 {
+                print("FAIL 소리가 하나도 안 들어왔습니다 — 화면 기록 권한을 확인하세요")
+            } else if recorder.peak < 0.0001 {
+                print("FAIL 무음만 들어왔습니다 — 권한은 났지만 소리가 안 잡힙니다")
+            } else {
+                print("OK \(out.path)")
+            }
+        } catch {
+            print("FAIL \(error.localizedDescription)")
+        }
+        done.signal()
+    }
+    _ = done.wait(timeout: .now() + seconds + 60)
+    exit(0)
+}
+
+// 진단용: 소리 파일만 받아쓴다. --from 초 --for 초 로 구간을, --on-device 로 온디바이스 인식을 고른다.
+if let i = CommandLine.arguments.firstIndex(of: "--transcribe"), i + 1 < CommandLine.arguments.count {
+    func number(_ flag: String, _ fallback: Double) -> Double {
+        guard let j = CommandLine.arguments.firstIndex(of: flag), j + 1 < CommandLine.arguments.count,
+              let v = Double(CommandLine.arguments[j + 1]) else { return fallback }
+        return v
+    }
+    let done = DispatchSemaphore(value: 0)
+    Transcriber.run(CommandLine.arguments[i + 1],
+                    from: number("--from", 0),
+                    seconds: number("--for", 0),
+                    onDevice: CommandLine.arguments.contains("--on-device")) { result in
+        switch result {
+        case .success(let r):
+            print("OK (\(String(format: "%.1f", r.seconds))초) 글자 \(r.text.count)")
+            print("구간 \(r.segments)개, 시각이 0이 아닌 것 \(r.timed)개, 마지막 시각 \(String(format: "%.2f", r.lastTimestamp))초")
+            let out = "/tmp/brefly-transcribe.txt"
+            try? r.text.write(toFile: out, atomically: true, encoding: .utf8)
+            print("전문: \(out)")
+        case .failure(let e):
+            print("FAIL \(e.localizedDescription)")
+        }
+        done.signal()
+    }
+    _ = done.wait(timeout: .now() + 1800)
+    exit(0)
+}
+
 if let i = CommandLine.arguments.firstIndex(of: "--polish"), i + 1 < CommandLine.arguments.count {
     let done = DispatchSemaphore(value: 0)
     let started = Date()
@@ -122,6 +414,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var state: AppState = .idle
     private var lastMessage = "준비됨"
     private var lastResult = ""
+    /// 회의록을 만드는 중인지. 겹쳐 돌리면 받아쓰기 모델이 두 번 올라가 메모리가 터진다.
+    private var isMakingMeetingNotes = false
+    /// 내려받기 중에 풀려나면 세션이 끝난다. 끝날 때까지 붙잡아 둔다.
+    private var modelDownloader: ModelDownloader?
+    /// 회의록을 멈추라는 표. 1~2분 걸리는 일이라 중간에 그만둘 수 있어야 한다.
+    private var meetingCancel: CancelToken?
+    /// 메뉴에 보여 줄 진행 문구. 메뉴를 열었을 때 어디쯤인지 알 수 있어야 한다.
+    private var meetingProgressLine: String?
+    /// 마지막 진행 상태. 팝오버를 닫거나 그 사이 받아쓰기를 하면 회의록 화면이 덮이는데,
+    /// 그때 "진행 상황 보기"로 되돌아오려면 들고 있어야 한다.
+    private var meetingRun: AppModel.MeetingRun?
+    /// 지금 돌아가는 회의 녹음. 팝오버를 닫아도 계속 돌아야 해서 여기 붙잡아 둔다.
+    private var meetingRecorder: MeetingRecorder?
+    /// 지금 만드는 회의록이 어떤 방식인지. 목록에 "대면/화상/녹음 파일"로 적는다.
+    private var meetingKind = MeetingRecord.Kind.file
+    /// 파형을 그리려고 소리 크기를 10분의 1초마다 가져오는 타이머.
+    private var meetingLevelTimer: Timer?
+    /// 메뉴바에 "회의 23:14" 를 찍으려고 들고 있는 시작 시각.
+    private var meetingRecordingStartedAt: Date?
+    private var meetingClockTimer: Timer?
+    /// 파일 고르기처럼 다른 창을 띄우는 동안 팝오버를 붙잡아 둘지.
+    private var keepPopoverOpen = false
     private var partialText = ""
 
     // 팝오버(시안 1a/1b/1c)
@@ -211,6 +525,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             self?.model.refreshPrefs()
         }
 
+        // 설치하면 앱이 꺼졌다 켜진다. 하던 일이 있으면 끝날 때까지 미룬다.
+        Updater.reportBusy { [weak self] in
+            guard let self else { return false }
+            return self.isMakingMeetingNotes || self.recorder.isRunning
+        }
         registerHotKey()
         Log.write("실행 경로: \(Bundle.main.bundlePath)")
         Log.write("자동 붙여넣기: \(Prefs.autoPaste), 접근성 권한: \(Paster.isTrusted)")
@@ -516,7 +835,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let lowered = (recError?.localizedDescription ?? "").lowercased()
         let noSpeech = recError == nil || lowered.contains("no speech") || (recError as NSError?)?.code == 1110
         if noSpeech && recorder.bufferCount > 0 {
-            finishQuietly("말한 내용이 없어요")
+            finishQuietly("말한 내용이 없어요.")
             return
         }
 
@@ -749,7 +1068,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func updatePopoverBackground(for phase: AppModel.Phase) {
-        if case .recording = phase {
+        // 회의 녹음도 받아쓰기 녹음과 같은 어두운 화면을 쓴다. 같은 일(듣는 중)이라 같아 보여야 한다.
+        var dark = false
+        if case .recording = phase { dark = true }
+        if case .meetingRecording = phase { dark = true }
+        if dark {
             popoverBackground.layer?.backgroundColor = Theme.ink.cgColor
         } else {
             popoverBackground.layer?.backgroundColor = Theme.paperColor(dark: Prefs.appearance.isDark).cgColor
@@ -768,11 +1091,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// 녹음 중·정리 중에는 팝오버를 붙박이로 둔다. 다른 데를 눌러도, 데스크탑을 옮겨도, 전체 화면 앱 위에서도 남는다.
     /// 그 밖의 상태(대기·완료·오류)는 평소 팝오버처럼 밖을 누르면 닫힌다.
     private func applyPopoverStickiness(for phase: AppModel.Phase) {
-        let sticky: Bool
+        var sticky: Bool
         switch phase {
         case .recording, .polishing: sticky = true
         default: sticky = false
         }
+        // 파일 고르기 창을 띄우는 동안에는 단계와 상관없이 붙잡아 둔다. 안 그러면 팝오버가
+        // 초점을 잃고 스스로 닫혀서, 파일을 고르고 돌아와도 아무것도 안 남는다.
+        if keepPopoverOpen { sticky = true }
         popover.behavior = sticky ? .applicationDefined : .transient
         if let window = popover.contentViewController?.view.window {
             window.collectionBehavior = sticky ? [.canJoinAllSpaces, .fullScreenAuxiliary] : []
@@ -840,6 +1166,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func wireModelActions() {
         model.actions.startRecording = { [weak self] in self?.startRecording() }
+        model.actions.cancelMeetingNotes = { [weak self] in self?.cancelMeetingNotes() }
+        model.actions.startMeetingInPerson = { [weak self] in self?.startMeetingInPerson() }
+        model.actions.openMeeting = { [weak self] record in
+            self?.popover.performClose(nil)
+            self?.openMeetingRecord(record)
+        }
+        model.actions.makeMeetingNotesFrom = { [weak self] url in
+            self?.ensureModelThenMakeNotes(for: url)
+        }
+        model.actions.startMeetingVideoCall = { [weak self] in self?.startMeetingVideoCall() }
+        model.actions.stopMeetingRecording = { [weak self] in self?.stopMeetingRecording() }
+        model.actions.cancelMeetingRecording = { [weak self] in self?.cancelMeetingRecording() }
+        model.actions.makeMeetingNotes = { [weak self] in self?.summarizeRecording() }
         model.actions.finishRecording = { [weak self] in
             guard let self, self.recorder.isRunning else { return }
             self.stopAndPolish()
@@ -943,6 +1282,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func updateStatusTitle() {
         DispatchQueue.main.async {
             guard let button = self.statusItem.button else { return }
+            // 회의록이 도는 동안은 그쪽 진행률이 이긴다. 받아쓰기 상태보다 오래 걸려서
+            // 지금 무엇이 돌고 있는지 알려 주는 쪽이 더 쓸모 있다.
+            if let ring = self.meetingRing {
+                // 녹음 중 시계는 받아쓰기 쪽과 같은 모양이다. ⚠️ 색을 지정하지 않는다 —
+                // 메뉴바 글자는 시스템이 밝기에 맞춰 칠해 준다. 직접 칠하면 밝은 메뉴바에서 안 보인다.
+                if case .recording = ring.kind, let started = self.meetingRecordingStartedAt {
+                    let seconds = Int(Date().timeIntervalSince(started))
+                    button.attributedTitle = NSAttributedString(
+                        string: String(format: " 회의 %d:%02d", seconds / 60, seconds % 60),
+                        attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)])
+                    return
+                }
+                let label = ring.fraction.map { " \(Int($0 * 100))%" } ?? ""
+                let dark = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                button.attributedTitle = NSAttributedString(
+                    string: label, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .bold),
+                                                .foregroundColor: ring.kind.color(dark: dark)])
+                return
+            }
             switch self.state {
             case .idle:
                 button.attributedTitle = NSAttributedString(string: "")
@@ -991,6 +1349,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let statusLine = NSMenuItem(title: lastMessage, action: nil, keyEquivalent: "")
         statusLine.isEnabled = false
         menu.addItem(statusLine)
+
+        if isMakingMeetingNotes {
+            // 처리 중에는 어디쯤인지와 멈추는 법을 맨 위에 둔다. 1~2분 걸리는 일이라
+            // 메뉴를 여는 이유가 대개 이 둘이다.
+            let line = NSMenuItem(title: "회의록 만드는 중 — \(meetingProgressLine ?? "준비 중")",
+                                  action: nil, keyEquivalent: "")
+            line.isEnabled = false
+            menu.addItem(line)
+            let showItem = NSMenuItem(title: "진행 상황 보기",
+                                      action: #selector(showMeetingProgress), keyEquivalent: "")
+            showItem.target = self
+            menu.addItem(showItem)
+            let cancelItem = NSMenuItem(title: "회의록 만들기 취소",
+                                        action: #selector(cancelMeetingNotes), keyEquivalent: "")
+            cancelItem.target = self
+            menu.addItem(cancelItem)
+            menu.addItem(.separator())
+        }
+
+        if meetingRecorder != nil {
+            let stopItem = NSMenuItem(title: "회의 녹음 마치고 회의록 만들기",
+                                      action: #selector(stopMeetingRecording), keyEquivalent: "")
+            stopItem.target = self
+            menu.addItem(stopItem)
+        } else if !isMakingMeetingNotes {
+            let inPerson = NSMenuItem(title: "지금 녹음 — 대면 회의",
+                                      action: #selector(startMeetingInPerson), keyEquivalent: "")
+            inPerson.target = self
+            menu.addItem(inPerson)
+            let video = NSMenuItem(title: "지금 녹음 — 화상 회의",
+                                   action: #selector(startMeetingVideoCall), keyEquivalent: "")
+            video.target = self
+            menu.addItem(video)
+        }
+
+        let meetingItem = NSMenuItem(title: "녹음 파일로 회의록 만들기…",
+                                     action: #selector(summarizeRecording), keyEquivalent: "")
+        meetingItem.target = self
+        // 처리 중에는 막는다. 두 개를 같이 돌리면 모델을 두 번 올려 메모리가 터진다.
+        meetingItem.isEnabled = !isMakingMeetingNotes
+        menu.addItem(meetingItem)
 
         let settingsItem = NSMenuItem(title: "설정 창 열기…", action: #selector(openSettingsWindow), keyEquivalent: ",")
         settingsItem.target = self
@@ -1237,14 +1636,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         Log.write("자동 붙여넣기: \(Prefs.autoPaste)")
 
         guard Prefs.autoPaste else {
-            setState(.idle, message: "클립보드 복사만 합니다 — ⌘V로 붙여넣으세요")
+            setState(.idle, message: "클립보드 복사만 합니다 — ⌘V로 붙여넣으세요.")
             return
         }
         if Paster.isTrusted {
-            setState(.idle, message: "커서 위치에 자동 붙여넣습니다")
+            setState(.idle, message: "커서 위치에 자동 붙여넣습니다.")
         } else {
             startTrustWatcher()
-            setState(.idle, message: "접근성 권한을 허용해 주세요")
+            setState(.idle, message: "접근성 권한을 허용해 주세요.")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                 self.showAccessibilityNotice()
             }
@@ -1269,6 +1668,465 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     @objc private func toggleServerRecognition() {
         Prefs.forceServerRecognition.toggle()
         setState(state, message: Prefs.forceServerRecognition ? "애플 서버 인식 사용" : "온디바이스 인식 우선")
+    }
+
+    /// 메뉴바 아이콘의 점 자리에 그릴 진행 고리. nil 이면 평소 모양(템플릿 아이콘)으로 돌아간다.
+    /// 회의록은 1~2분이 걸리는데 메뉴를 닫으면 표시가 없어서 멈춘 줄 안다 — 그래서 아이콘에 남긴다.
+    /// 고리가 무엇을 뜻하는지. 색은 메뉴바 밝기에 맞춰 그릴 때 정한다 —
+    /// ⚠️ 코랄로 그렸더니 메뉴바에서 묻혔다(2026-09-29). 파형처럼 메뉴바를 따라가야 한다.
+    enum RingKind {
+        case recording // 회의를 녹음하는 중 — 로고 + 코랄 점 + "회의 23:14"
+        case working   // 밝은 메뉴바면 어둡게, 어두운 메뉴바면 희게
+        case done      // 끝났다는 신호라 밝기와 무관하게 초록
+
+        func color(dark: Bool) -> NSColor {
+            switch self {
+            case .recording: return Theme.coral
+            case .working: return dark ? .white : NSColor(white: 0.15, alpha: 1)
+            case .done:    return Theme.done
+            }
+        }
+    }
+
+    private var meetingRing: (fraction: Double?, kind: RingKind)? {
+        didSet {
+            applyMenuBarIcon()
+            updateStatusTitle()
+        }
+    }
+    /// 끝난 뒤 초록 점을 잠깐 보여 주고 원래대로 돌리는 타이머.
+    private var doneRingTimer: Timer?
+    /// 로고 로더를 돌리는 타이머. 팝오버의 BreflyLoader 와 같은 96프레임 루프를 메뉴바에 그린다.
+    private var ringSpinTimer: Timer?
+    private var loaderFrame: Double = 0
+
+    private func applyMenuBarIcon() {
+        guard let button = statusItem?.button else { return }
+        guard let ring = meetingRing else {
+            ringSpinTimer?.invalidate()
+            ringSpinTimer = nil
+            button.image = Logo.menuBarIcon()
+            return
+        }
+        // 다 끝난 초록 고리는 돌리지 않는다. 끝났는데 도는 건 거짓말이다.
+        let spinning: Bool
+        if case .working = ring.kind { spinning = true } else { spinning = false }
+        if spinning, ringSpinTimer == nil {
+            // 원본과 같은 30fps 96프레임. 더 느리게 돌리면 파형이 끊겨 보인다.
+            ringSpinTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+                guard let self, self.meetingRing != nil else { return }
+                self.loaderFrame = (self.loaderFrame + 1).truncatingRemainder(dividingBy: 96)
+                self.applyMenuBarIcon()
+            }
+        } else if !spinning {
+            ringSpinTimer?.invalidate()
+            ringSpinTimer = nil
+            loaderFrame = 0
+        }
+        // 메뉴바는 배경화면에 따라 어두울 수 있다. 앱 모드가 아니라 버튼이 실제로 쓰는 모양새를 본다.
+        let dark = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        switch ring.kind {
+        case .recording:
+            // 시안 T3: 평소 로고 그대로 두되 점만 코랄로 둔다. 도는 것은 없다 — 녹음은 기다리는 일이 아니다.
+            button.image = Logo.mark(size: 18, wave: dark ? .white : NSColor(white: 0.1, alpha: 1),
+                                     dot: Theme.coral)
+        case .working:
+            // 돌아가는 고리는 "안 이쁘다"는 말을 들었다. 팝오버에서 쓰던 로고 애니메이션을 그대로 쓴다.
+            button.image = Logo.menuBarLoader(frame: loaderFrame, dark: dark)
+        case .done:
+            button.image = Logo.menuBarIcon(progress: 1, color: ring.kind.color(dark: dark), dark: dark)
+        }
+    }
+
+    /// 다 됐다는 표시를 5초만 보여 준다. 계속 두면 다음에 볼 때 무슨 뜻인지 모른다.
+    private func flashDoneRing() {
+        doneRingTimer?.invalidate()
+        meetingRing = (1, .done)
+        doneRingTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
+            self?.meetingRing = nil
+        }
+    }
+
+    // MARK: 회의를 지금 녹음하기
+
+    @objc private func startMeetingInPerson() {
+        meetingKind = .inPerson
+        beginMeetingRecording(captureSystem: false)
+    }
+
+    @objc private func startMeetingVideoCall() {
+        // ⚠️ 화면 기록 권한이 없으면 상대 목소리를 못 잡는다. 그냥 시작하면 회의가 끝난 뒤에야
+        //    내 말만 남은 걸 알게 된다 — 되돌릴 수 없는 손해다. 먼저 묻는다.
+        Task { @MainActor in
+            if await SystemAudioRecorder.hasPermission() {
+                self.meetingKind = .videoCall
+                self.beginMeetingRecording(captureSystem: true)
+                return
+            }
+            let alert = NSAlert()
+            alert.messageText = "상대 목소리를 잡으려면 화면 기록 권한이 필요합니다."
+            alert.informativeText = """
+                화상회의에서 상대 목소리는 스피커로 나가기 때문에 마이크에 잡히지 않습니다. \
+                macOS 는 그 소리를 '화면 기록' 권한으로 다룹니다. 화면을 저장하지는 않습니다.
+
+                권한 없이 녹음하면 내 목소리만 남습니다.
+                """
+            alert.addButton(withTitle: "설정 열기")
+            alert.addButton(withTitle: "내 목소리만 녹음")
+            alert.addButton(withTitle: "취소")
+            NSApp.activate(ignoringOtherApps: true)
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                    NSWorkspace.shared.open(url)
+                }
+                self.setState(self.state, message: "권한을 켠 뒤 다시 눌러 주세요.")
+            case .alertSecondButtonReturn:
+                self.meetingKind = .videoCall
+                self.beginMeetingRecording(captureSystem: false)
+            default:
+                break
+            }
+        }
+    }
+
+    private func beginMeetingRecording(captureSystem: Bool) {
+        guard !isMakingMeetingNotes, meetingRecorder == nil else { return }
+        let recorder = MeetingRecorder()
+        meetingRecorder = recorder
+        Task { @MainActor in
+            do {
+                _ = try await recorder.start(captureSystem: captureSystem)
+            } catch {
+                self.meetingRecorder = nil
+                self.setState(self.state, message: "회의 녹음을 시작하지 못했습니다: \(error.localizedDescription)")
+                return
+            }
+            let capturing = captureSystem && recorder.systemAudioError == nil
+            self.model.phase = .meetingRecording(AppModel.MeetingRecordingRun(
+                startedAt: Date(), capturingSystem: capturing, inPerson: !captureSystem))
+            self.showPopover()
+            self.startMeetingLevelTimer(recorder)
+            self.meetingRecordingStartedAt = Date()
+            self.meetingClockTimer?.invalidate()
+            // 1초마다 메뉴바 시계를 다시 찍는다.
+            self.meetingClockTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                self?.updateStatusTitle()
+            }
+            self.meetingRing = (nil, .recording)
+            self.setState(self.state, message: captureSystem && !capturing
+                          ? "회의 녹음 중 — 상대 목소리는 못 잡습니다"
+                          : "회의 녹음 중")
+            self.rebuildMenu()
+        }
+    }
+
+    /// 소리 크기를 받아 파형 줄을 왼쪽으로 민다. 받아쓰기 파형과 같은 방식이다.
+    private func startMeetingLevelTimer(_ recorder: MeetingRecorder) {
+        meetingLevelTimer?.invalidate()
+        meetingLevelTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self, weak recorder] _ in
+            guard let self, let recorder else { return }
+            let level = recorder.takeLevels()
+            self.model.meetingMicLevels.insert(level.mic, at: 0)
+            self.model.meetingMicLevels.removeLast()
+            self.model.meetingSystemLevels.insert(level.system, at: 0)
+            self.model.meetingSystemLevels.removeLast()
+        }
+    }
+
+    /// 녹음을 버린다. 받아쓰기에도 취소가 있는데 회의 녹음에만 없으면 잘못 시작했을 때 갇힌다.
+    @objc private func cancelMeetingRecording() {
+        guard let recorder = meetingRecorder else { return }
+        // ⚠️ 되돌릴 수 없다. 녹음 파일까지 지우므로 잘못 누르면 회의 하나가 통째로 사라진다.
+        //    팝오버가 닫히지 않게 붙잡아 두고 묻는다.
+        let alert = NSAlert()
+        let minutes = Int(Date().timeIntervalSince(meetingRecordingStartedAt ?? Date())) / 60
+        alert.messageText = "녹음을 취소할까요?"
+        alert.informativeText = minutes > 0
+            ? "지금까지 녹음한 \(minutes)분이 사라집니다. 되돌릴 수 없습니다."
+            : "지금까지 녹음한 것이 사라집니다. 되돌릴 수 없습니다."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "녹음 취소")
+        alert.addButton(withTitle: "계속 녹음")
+        keepPopoverOpen = true
+        applyPopoverStickiness(for: model.phase)
+        NSApp.activate(ignoringOtherApps: true)
+        let answer = alert.runModal()
+        keepPopoverOpen = false
+        applyPopoverStickiness(for: model.phase)
+        guard answer == .alertFirstButtonReturn else { return }
+
+        meetingRecorder = nil
+        meetingLevelTimer?.invalidate()
+        meetingLevelTimer = nil
+        meetingClockTimer?.invalidate()
+        meetingClockTimer = nil
+        meetingRecordingStartedAt = nil
+        model.meetingMicLevels = Array(repeating: 0, count: 11)
+        model.meetingSystemLevels = Array(repeating: 0, count: 11)
+        Task { @MainActor in
+            let session = await recorder.stop()
+            // 버리기로 한 녹음을 디스크에 남겨 두지 않는다. 목소리다.
+            if let session { try? FileManager.default.removeItem(at: session.directory) }
+            self.meetingRing = nil
+            if case .meetingRecording = self.model.phase { self.model.phase = .idle }
+            self.setState(self.state, message: "회의 녹음을 취소했습니다.")
+            Log.write("회의 녹음 취소 — 녹음 파일도 지웠다")
+        }
+    }
+
+    @objc private func stopMeetingRecording() {
+        guard let recorder = meetingRecorder else { return }
+        meetingRecorder = nil
+        meetingLevelTimer?.invalidate()
+        meetingLevelTimer = nil
+        meetingClockTimer?.invalidate()
+        meetingClockTimer = nil
+        meetingRecordingStartedAt = nil
+        model.meetingMicLevels = Array(repeating: 0, count: 11)
+        model.meetingSystemLevels = Array(repeating: 0, count: 11)
+        setState(state, message: "녹음을 마치는 중…")
+        Task { @MainActor in
+            guard let session = await recorder.stop() else {
+                self.meetingRing = nil
+                self.model.phase = .idle
+                return
+            }
+            // 시스템 트랙이 비어 있으면(권한 없음 등) 넘기지 않는다 — 무음을 받아쓰면
+            // Whisper 가 없는 말을 지어낸다.
+            let system = recorder.systemBuffers > 0 ? session.system : nil
+            self.makeMeetingNotesFromTracks(mic: session.mic, system: system,
+                                            recordedAt: session.startedAt,
+                                            folder: session.directory)
+        }
+    }
+
+    private func makeMeetingNotesFromTracks(mic: URL, system: URL?, recordedAt: Date, folder: URL) {
+        isMakingMeetingNotes = true
+        let cancel = CancelToken()
+        meetingCancel = cancel
+        var run = AppModel.MeetingRun(fileName: "회의 녹음", audioSeconds: nil, startedAt: Date())
+        meetingRun = run
+        model.phase = .meeting(run)
+        MeetingNotes.makeFromTracks(mic: mic, system: system, recordedAt: recordedAt, cancel: cancel,
+                                    onProgress: { [weak self] progress in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                self.meetingRing = (progress.fraction, .working)
+                self.meetingProgressLine = progress.text
+                run.stage = progress.stage
+                run.fraction = progress.fraction
+                self.meetingRun = run
+                if case .meeting = self.model.phase { self.model.phase = .meeting(run) }
+                self.setState(self.state, message: "회의록: \(progress.text)")
+            }
+        }, completion: { [weak self] result in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                self.isMakingMeetingNotes = false
+                self.meetingCancel = nil
+                self.meetingProgressLine = nil
+                self.meetingRun = nil
+                if case .meeting = self.model.phase { self.model.phase = .idle }
+                switch result {
+                case .success(let notes):
+                    self.finishMeetingNotes(notes, source: mic, titleOverride: folder.lastPathComponent)
+                case .failure(let error):
+                    self.meetingRing = nil
+                    self.setState(self.state, message: error.localizedDescription)
+                    Log.write("회의 녹음 회의록 끝남: \(error.localizedDescription)")
+                }
+            }
+        })
+    }
+
+    // MARK: 녹음 파일로 회의록 만들기
+
+    @objc private func summarizeRecording() {
+        guard !isMakingMeetingNotes else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.audio, .movie]
+        panel.allowsMultipleSelection = false
+        panel.message = "회의 녹음 파일을 고르세요."
+        panel.prompt = "회의록 만들기"
+        // 메뉴바 앱이라 먼저 앞으로 나오지 않으면 창이 뒤에 숨는다.
+        NSApp.activate(ignoringOtherApps: true)
+        keepPopoverOpen = true
+        applyPopoverStickiness(for: model.phase)
+        defer {
+            keepPopoverOpen = false
+            applyPopoverStickiness(for: model.phase)
+        }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        ensureModelThenMakeNotes(for: url)
+    }
+
+    /// 모델이 없으면 먼저 받는다. 547MB 라 묻지 않고 받으면 안 된다.
+    private func ensureModelThenMakeNotes(for url: URL) {
+        meetingKind = .file
+        if ModelStore.hasTranscriptionModel {
+            makeMeetingNotes(for: url)
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "받아쓰기 모델을 내려받을까요?"
+        alert.informativeText = "회의록을 만들려면 받아쓰기 모델(약 547MB)이 필요합니다. 한 번만 받으면 됩니다.\n"
+            + "받은 뒤에는 인터넷 없이도 회의록을 만들 수 있고, 녹음이 밖으로 나가지 않습니다."
+        alert.addButton(withTitle: "내려받기")
+        alert.addButton(withTitle: "취소")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        isMakingMeetingNotes = true
+        setState(state, message: "받아쓰기 모델 내려받는 중…")
+        let downloader = ModelDownloader()
+        modelDownloader = downloader
+        downloader.download(onProgress: { [weak self] progress in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                self.meetingRing = (progress.fraction, .working)
+                self.setState(self.state, message: "모델 내려받는 중 \(Int(progress.fraction * 100))% (\(progress.text))")
+            }
+        }, completion: { [weak self] result in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                self.isMakingMeetingNotes = false
+                self.modelDownloader = nil
+                switch result {
+                case .success: self.makeMeetingNotes(for: url)
+                case .failure(let error):
+                    self.meetingRing = nil
+                    self.setState(self.state, message: error.localizedDescription)
+                }
+            }
+        })
+    }
+
+    private func makeMeetingNotes(for url: URL) {
+        isMakingMeetingNotes = true
+        let cancel = CancelToken()
+        meetingCancel = cancel
+        // 파일 길이는 화면에만 쓴다. 못 읽어도 회의록은 만든다.
+        let seconds = CMTimeGetSeconds(AVURLAsset(url: url).duration)
+        var run = AppModel.MeetingRun(fileName: url.lastPathComponent,
+                                      audioSeconds: seconds.isFinite && seconds > 0 ? seconds : nil,
+                                      startedAt: Date())
+        meetingRun = run
+        model.phase = .meeting(run)
+        // 시안 2-1 의 (나). 시작할 때 한 번 열어 주고, 닫으면 메뉴바 고리가 이어받는다.
+        showPopover()
+        setState(state, message: "회의록 만드는 중…")
+        MeetingNotes.make(audio: url, cancel: cancel, onProgress: { [weak self] progress in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                self.meetingRing = (progress.fraction, .working)
+                self.meetingProgressLine = progress.text
+                run.stage = progress.stage
+                run.fraction = progress.fraction
+                self.meetingRun = run
+                // 그 사이 받아쓰기를 시작했으면 그 화면을 덮지 않는다. 되돌아오는 길은 메뉴에 둔다.
+                if case .meeting = self.model.phase { self.model.phase = .meeting(run) }
+                self.setState(self.state, message: "회의록: \(progress.text)")
+            }
+        }, completion: { [weak self] result in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                self.isMakingMeetingNotes = false
+                self.meetingCancel = nil
+                self.meetingProgressLine = nil
+                self.meetingRun = nil
+                // 회의록 화면을 띄워 놨으면 내린다. 그 사이 사용자가 녹음을 시작했으면 건드리지 않는다.
+                if case .meeting = self.model.phase { self.model.phase = .idle }
+                switch result {
+                case .success(let notes): self.finishMeetingNotes(notes, source: url)
+                case .failure(let error):
+                    self.meetingRing = nil
+                    self.setState(self.state, message: error.localizedDescription)
+                    Log.write("회의록 끝남: \(error.localizedDescription)")
+                }
+            }
+        })
+    }
+
+    /// 녹음 파일 옆에 둔다. 앱 안 어딘가에 숨겨 두면 사용자가 찾지 못한다.
+    /// 그 자리에 못 쓰면(읽기 전용 위치 등) 앱 폴더로 물러선다.
+    private func finishMeetingNotes(_ notes: MeetingNotes.Result, source: URL,
+                                    titleOverride: String? = nil) {
+        // 직접 녹음한 것은 파일 이름이 "mic" 이라 쓸모가 없다. 폴더 이름(날짜-시각)을 쓴다.
+        let stem = titleOverride ?? source.deletingPathExtension().lastPathComponent
+        let name = stem + " 회의록.md"
+        var target = source.deletingLastPathComponent().appendingPathComponent(name)
+        let body = "# " + stem + "\n\n" + notes.notes + "\n"
+        do {
+            try body.write(to: target, atomically: true, encoding: .utf8)
+        } catch {
+            let fallback = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support/Brefly/meetings", isDirectory: true)
+            try? FileManager.default.createDirectory(at: fallback, withIntermediateDirectories: true)
+            target = fallback.appendingPathComponent(name)
+            try? body.write(to: target, atomically: true, encoding: .utf8)
+            Log.write("회의록을 녹음 옆에 못 써서 앱 폴더로 옮김: \(error.localizedDescription)")
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(notes.notes, forType: .string)
+        lastResult = notes.notes
+        let seconds = Int(notes.transcribeSeconds + notes.summarizeSeconds)
+        setState(state, message: "회의록을 만들었습니다 (\(seconds)초). 클립보드에도 복사했습니다.")
+        Log.write("회의록 완성 — \(target.path), 받아쓰기 \(Int(notes.transcribeSeconds))초 + 요약 \(Int(notes.summarizeSeconds))초")
+        // 목록에 남긴다. 받아쓴 구간은 커서 파일로 따로 둔다.
+        let id = UUID().uuidString
+        MeetingHistoryStore.saveSegments(notes.segments, id: id)
+        let audioSeconds2 = CMTimeGetSeconds(AVURLAsset(url: source).duration)
+        MeetingHistoryStore.add(MeetingRecord(
+            id: id, title: stem, date: Date(), kind: meetingKind,
+            seconds: audioSeconds2.isFinite && audioSeconds2 > 0 ? audioSeconds2 : nil,
+            todoCount: MeetingHistoryStore.countTodos(in: notes.notes),
+            notesPath: target.path, audioPath: source.path))
+        model.meetingHistory = MeetingHistoryStore.load()
+
+        flashDoneRing()
+        // Finder 로 파일만 보여 주고 끝내면 사용자가 .md 를 열 앱을 찾아야 한다.
+        // 앱 안에서 바로 읽고 고칠 수 있게 창을 띄운다.
+        let audioSeconds = CMTimeGetSeconds(AVURLAsset(url: source).duration)
+        MeetingWindow.shared.show(MeetingDocument(
+            title: stem,
+            audio: source,
+            notesFile: target,
+            recordedAt: (try? source.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date(),
+            duration: audioSeconds.isFinite && audioSeconds > 0 ? audioSeconds : nil,
+            notes: notes.notes,
+            segments: notes.segments))
+    }
+
+    /// 팝오버를 닫았거나 그 사이 받아쓰기를 해서 회의록 화면이 덮였을 때 되돌아온다.
+    @objc private func showMeetingProgress() {
+        guard let run = meetingRun else { return }
+        // 녹음 중이면 건드리지 않는다. 말하는 도중에 화면이 바뀌면 그게 더 곤란하다.
+        guard !recorder.isRunning else {
+            setState(state, message: "녹음을 마친 뒤에 볼 수 있습니다.")
+            return
+        }
+        model.phase = .meeting(run)
+        showPopover()
+    }
+
+    /// 만들어 둔 회의록을 다시 연다. 본문은 파일에서 읽는다 — 사용자가 고쳤을 수 있다.
+    private func openMeetingRecord(_ record: MeetingRecord) {
+        guard let notes = try? String(contentsOf: record.notesFile, encoding: .utf8) else {
+            setState(state, message: "회의록 파일을 찾지 못했습니다. 옮기거나 지우셨나요?")
+            model.meetingHistory = MeetingHistoryStore.load()
+            return
+        }
+        MeetingWindow.shared.show(MeetingDocument(
+            title: record.title, audio: record.audioFile, notesFile: record.notesFile,
+            recordedAt: record.date, duration: record.seconds,
+            notes: notes, segments: MeetingHistoryStore.segments(id: record.id)))
+    }
+
+    @objc private func cancelMeetingNotes() {
+        meetingCancel?.cancel()
+        setState(state, message: "회의록을 멈춥니다…")
+        Log.write("회의록 취소를 눌렀다")
     }
 
     @objc private func copyLast() {
@@ -1425,7 +2283,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             NSApp.activate(ignoringOtherApps: true)
             let alert = NSAlert()
             alert.alertStyle = .warning
-            alert.messageText = "macOS 받아쓰기를 켜 주세요"
+            alert.messageText = "macOS 받아쓰기를 켜 주세요."
             alert.informativeText = """
                 Brefly는 애플 음성 인식 엔진을 씁니다. 시스템의 받아쓰기 기능이 꺼져 있으면 \
                 온디바이스든 서버든 인식이 되지 않습니다.
@@ -1462,7 +2320,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func showAccessibilityNotice() {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "접근성 권한이 필요합니다"
+        alert.messageText = "접근성 권한이 필요합니다."
         alert.informativeText = """
             커서 위치에 텍스트를 자동으로 붙여 넣으려면 접근성 권한이 필요합니다.
 
