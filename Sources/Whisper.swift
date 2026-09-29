@@ -18,6 +18,9 @@ enum Whisper {
         let text: String
         let start: Double
         let end: Double
+        /// 누가 말했는지. 화상 회의처럼 트랙이 갈려 있을 때만 채워진다(`"나"` / `"상대"`).
+        /// 받아쓰기 자체는 화자를 모른다 — 채널이 알려 주는 것이다.
+        var speaker: String? = nil
     }
 
     enum Failure: LocalizedError {
