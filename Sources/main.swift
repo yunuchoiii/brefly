@@ -72,6 +72,30 @@ if let i = CommandLine.arguments.firstIndex(of: "--prompt"), i + 1 < CommandLine
     exit(0)
 }
 
+// 진단용: whisper.cpp 로 소리 파일을 받아쓴다. --model 로 모델 파일을 가리킨다.
+if let i = CommandLine.arguments.firstIndex(of: "--whisper"), i + 1 < CommandLine.arguments.count {
+    let audio = URL(fileURLWithPath: CommandLine.arguments[i + 1])
+    let model: URL = CommandLine.arguments.firstIndex(of: "--model").flatMap { j in
+        j + 1 < CommandLine.arguments.count ? URL(fileURLWithPath: CommandLine.arguments[j + 1]) : nil
+    } ?? ModelStore.transcriptionModel
+    let started = Date()
+    do {
+        let segments = try Whisper.transcribe(audio: audio, model: model)
+        let took = Date().timeIntervalSince(started)
+        let text = segments.map(\.text).joined(separator: " ")
+        print("OK \(String(format: "%.1f", took))초, 구간 \(segments.count)개, 글자 \(text.count)")
+        for s in segments.prefix(3) {
+            print("  \(String(format: "%6.2f", s.start))~\(String(format: "%.2f", s.end))초: \(s.text.prefix(40))")
+        }
+        let out = "/tmp/brefly-whisper.txt"
+        try? text.write(toFile: out, atomically: true, encoding: .utf8)
+        print("전문: \(out)")
+    } catch {
+        print("FAIL \(error.localizedDescription)")
+    }
+    exit(0)
+}
+
 // 진단용: 마이크와 시스템 소리를 함께 회의 녹음한다. 두 갈래가 제대로 갈려 들어오는지 본다.
 if let i = CommandLine.arguments.firstIndex(of: "--record-meeting"), i + 1 < CommandLine.arguments.count {
     let seconds = Double(CommandLine.arguments[i + 1]) ?? 10

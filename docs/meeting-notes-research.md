@@ -146,6 +146,38 @@
 에코를 지운 뒤 완전한 무음이 된 마이크 트랙을 받아썼더니, 그럴듯한 한 문장이 나왔다.
 회의 중 조용한 구간마다 없는 말이 적힐 수 있다. **무음 구간을 미리 걸러내야 한다**(VAD).
 
+## whisper.cpp 를 빌드에 넣었다 (2026-09-29)
+
+`vendor/whisper/` 에 **정적 라이브러리**로 넣고 `swiftc` 에 그대로 이어 붙였다.
+SwiftPM 도 Xcode 프로젝트도 필요 없었다 — whisper.cpp 가 순수 C API 이기 때문이다.
+
+    vendor/whisper/lib/*.a        5.2MB (libwhisper, libggml*, libparakeet)
+    vendor/whisper/include/*.h
+    vendor/whisper/bridge.h       Swift 가 읽는 다리
+    vendor/whisper/VERSION        v1.9.4 (927cfce), MIT
+
+빌드한 방법:
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+  -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON \
+  -DWHISPER_BUILD_EXAMPLES=OFF -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_SERVER=OFF \
+  -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0
+```
+
+- ⚠️ **brew 로 깐 dylib 는 배포에 못 쓴다.** `/opt/homebrew/...` 를 가리켜서 사용자 맥에서 안 열린다.
+- ⚠️ **`-lc++` 가 필요하다.** whisper.cpp 속은 C++ 이라 없으면 `std::` 기호를 못 찾는다.
+- ⚠️ `GGML_METAL_EMBED_LIBRARY=ON` 으로 Metal 셰이더를 라이브러리 안에 넣는다. 안 그러면
+  `.metal` 파일을 번들에 같이 넣고 경로를 맞춰 줘야 한다.
+- **정적이라 백엔드가 저절로 등록된다.** 동적으로 쓸 때 필요했던 `ggml_backend_load_all_from_path()`
+  가 필요 없다.
+
+앱 안에서 잰 값(35분 녹음): **106.8초, 구간 1349개, 16,608자.** 명령줄(124초)보다 빨랐다.
+앱 6.3MB → 10MB, 서명·공증 절차는 그대로다(새 dylib 가 없으므로).
+
+모델은 번들에 안 넣는다. 547MB 라 받아쓰기만 쓰는 사람에게 짐이 된다 —
+`ModelStore` 가 `~/Library/Application Support/Brefly/models/` 를 가리키고, 회의록을 켤 때 받는다.
+
 ## 다음 순서
 
 1. ~~시스템 소리 잡기~~ — 됐다(위).
