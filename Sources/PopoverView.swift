@@ -56,75 +56,84 @@ struct IdleView: View {
             }
             .padding(.horizontal, 16).padding(.top, 16)
 
-            Button(action: model.actions.startRecording) {
-                HStack(spacing: 8) {
-                    Circle().fill(Color.coral).frame(width: 8, height: 8)
-                    Text("녹음 시작").font(.system(size: 14, weight: .semibold))
-                }
-                .foregroundColor(.onPrimary)
-                .frame(maxWidth: .infinity).frame(height: 42)
-                // 제목은 가운데 그대로 두고 단축키만 오른쪽에 붙인다. HStack 에 넣으면 제목이 왼쪽으로 밀린다.
-                .overlay(alignment: .trailing) {
-                    KeyCap(model.hotKeyTitle, accent: true).padding(.trailing, 12)
-                }
-                .background(Color.primaryFill)
-                .cornerRadius(10)
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 12)
-
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("핵심 요약").font(.system(size: 13, weight: .semibold)).foregroundColor(.ink)
-                    Text("요점만 불릿 목록으로 정리합니다")
-                        .font(.system(size: 11)).foregroundColor(.text3)
-                }
-                Spacer()
-                Toggle("", isOn: Binding(get: { model.summaryOn }, set: { model.actions.setSummary($0) }))
-                    .toggleStyle(.switch).labelsHidden().controlSize(.small)
-                    // 기본 스위치는 시스템 강조색(파랑)을 쓴다. 테마 코랄로 맞춘다.
-                    .tint(.coral)
-            }
-            .padding(.horizontal, 16).padding(.bottom, 12)
-
+            PopoverTabBar(model: model)
             HairLine()
 
-            VStack(spacing: 0) {
-                HStack {
-                    Text("최근 요약").font(.system(size: 12, weight: .semibold)).foregroundColor(.text2)
-                    Spacer()
-                    if !model.history.isEmpty {
-                        Button("모두 보기") { model.screen = .history }
-                            .buttonStyle(.plain).font(.system(size: 12)).foregroundColor(.text3)
-                    }
-                }
-                .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 4)
+            Group {
+                if model.tab == .dictation {
+                    VStack(spacing: 0) {
 
-                if model.history.isEmpty {
-                    Text("아직 요약이 없어요. 녹음을 시작해 보세요.")
-                        .font(.system(size: 12)).foregroundColor(.text4)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 16).padding(.top, 6).padding(.bottom, 14)
+                    Button(action: model.actions.startRecording) {
+                        HStack(spacing: 8) {
+                            Circle().fill(Color.coral).frame(width: 8, height: 8)
+                            Text("녹음 시작").font(.system(size: 14, weight: .semibold))
+                        }
+                        .foregroundColor(.onPrimary)
+                        .frame(maxWidth: .infinity).frame(height: 42)
+                        // 제목은 가운데 그대로 두고 단축키만 오른쪽에 붙인다. HStack 에 넣으면 제목이 왼쪽으로 밀린다.
+                        .overlay(alignment: .trailing) {
+                            KeyCap(model.hotKeyTitle, accent: true).padding(.trailing, 12)
+                        }
+                        .background(Color.primaryFill)
+                        .cornerRadius(10)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 12)
+
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("핵심 요약").font(.system(size: 13, weight: .semibold)).foregroundColor(.ink)
+                            Text("요점만 불릿 목록으로 정리합니다")
+                                .font(.system(size: 11)).foregroundColor(.text3)
+                        }
+                        Spacer()
+                        Toggle("", isOn: Binding(get: { model.summaryOn }, set: { model.actions.setSummary($0) }))
+                            .toggleStyle(.switch).labelsHidden().controlSize(.small)
+                            // 기본 스위치는 시스템 강조색(파랑)을 쓴다. 테마 코랄로 맞춘다.
+                            .tint(.coral)
+                    }
+                    .padding(.horizontal, 16).padding(.bottom, 12)
+
+                    HairLine()
+
+                    VStack(spacing: 0) {
+                        HStack {
+                            Text("최근 요약").font(.system(size: 12, weight: .semibold)).foregroundColor(.text2)
+                            Spacer()
+                            if !model.history.isEmpty {
+                                Button("모두 보기") { model.screen = .history }
+                                    .buttonStyle(.plain).font(.system(size: 12)).foregroundColor(.text3)
+                            }
+                        }
+                        .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 4)
+
+                        if model.history.isEmpty {
+                            Text("아직 요약이 없어요. 녹음을 시작해 보세요.")
+                                .font(.system(size: 12)).foregroundColor(.text4)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 16).padding(.top, 6).padding(.bottom, 14)
+                        } else {
+                            ForEach(model.history.prefix(3)) { record in
+                                HistoryRow(record: record,
+                                           open: { model.rawExpanded = false; model.phase = .done(record, .viewing) },
+                                           copy: { model.actions.copy(record) })
+                            }
+                            Spacer().frame(height: 6)
+                        }
+                    }
+                    .background(Color.paperSoft)
+
+                    }
                 } else {
-                    ForEach(model.history.prefix(3)) { record in
-                        HistoryRow(record: record,
-                                   open: { model.rawExpanded = false; model.phase = .done(record, .viewing) },
-                                   copy: { model.actions.copy(record) })
-                    }
-                    Spacer().frame(height: 6)
+                    MeetingTabView(model: model)
                 }
             }
-            .background(Color.paperSoft)
 
             HairLine()
 
-            HStack(spacing: 14) {
-                Button("회의 녹음", action: model.actions.startMeetingRecording)
-                    .buttonStyle(.plain).fontWeight(.semibold).foregroundColor(.ink)
-                Button("녹음 파일로…", action: model.actions.makeMeetingNotes).buttonStyle(.plain)
+            HStack {
                 Spacer()
-                Button("설정…", action: model.actions.openSettings).buttonStyle(.plain)
-                Button("종료", action: model.actions.quit).buttonStyle(.plain)
+                Button("설정", action: model.actions.openSettings).buttonStyle(.plain)
             }
             .font(.system(size: 12)).foregroundColor(.text3)
             .padding(.horizontal, 16).padding(.vertical, 10)
@@ -707,7 +716,8 @@ struct MeetingRecordingView: View {
         VStack(spacing: 14) {
             HStack(spacing: 8) {
                 Circle().fill(Color.coral).frame(width: 9, height: 9)
-                Text("회의 녹음 중").font(.system(size: 14, weight: .bold)).foregroundColor(.ink)
+                Text(run.inPerson ? "대면 회의 녹음 중" : "화상 회의 녹음 중")
+                    .font(.system(size: 14, weight: .bold)).foregroundColor(.ink)
             }
             Text(run.elapsedText)
                 .font(.system(size: 30, weight: .heavy, design: .rounded))
@@ -715,10 +725,16 @@ struct MeetingRecordingView: View {
                 .id(tick)
 
             VStack(alignment: .leading, spacing: 4) {
-                row(on: true, text: "내 목소리 — 마이크")
-                row(on: run.capturingSystem,
-                    text: run.capturingSystem ? "상대 목소리 — 스피커로 나가는 소리"
-                                              : "상대 목소리 — 못 잡습니다 (화면 기록 권한 필요)")
+                if run.inPerson {
+                    // 대면은 한 마이크에 다 들어오는 것이 정상이다. 경고를 띄우면 안 된다 —
+                    // 잘못된 경고는 진짜 경고까지 무시하게 만든다.
+                    row(on: true, text: "마이크 하나로 그 자리의 말을 모두 담습니다")
+                } else {
+                    row(on: true, text: "내 목소리 — 마이크")
+                    row(on: run.capturingSystem,
+                        text: run.capturingSystem ? "상대 목소리 — 스피커로 나가는 소리"
+                                                  : "상대 목소리 — 못 잡습니다 (화면 기록 권한 필요)")
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(11)
@@ -743,5 +759,120 @@ struct MeetingRecordingView: View {
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
+    }
+}
+
+/// 팝오버 탭. 회의록은 시작하는 길이 셋이라 받아쓰기와 한 화면에 두면 무엇이 무엇인지 알 수 없다.
+struct PopoverTabBar: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        HStack(spacing: 18) {
+            tab("받아쓰기", .dictation)
+            tab("회의록", .meeting)
+            Spacer()
+        }
+        .padding(.horizontal, 16).padding(.top, 12)
+    }
+
+    private func tab(_ title: String, _ value: AppModel.Tab) -> some View {
+        let on = model.tab == value
+        return Button(action: { model.tab = value }) {
+            VStack(spacing: 6) {
+                Text(title)
+                    .font(.system(size: 12.5, weight: on ? .semibold : .regular))
+                    .foregroundColor(on ? .ink : .text3)
+                Rectangle().fill(on ? Color.coral : Color.clear).frame(height: 2)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// 회의록 탭. 시작하는 길이 셋이다 — 대면·화상은 누르면 바로 녹음이 시작되고,
+/// 파일은 창을 여는 동작이라 점선으로 갈라 둔다.
+struct MeetingTabView: View {
+    @ObservedObject var model: AppModel
+    @State private var dropTargeted = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 8) {
+                startRow(title: "대면 회의 녹음",
+                         detail: "이 맥의 마이크로 듣습니다",
+                         action: model.actions.startMeetingInPerson)
+                startRow(title: "화상 회의 녹음",
+                         detail: "내 목소리와 상대방 소리를 함께 듣습니다",
+                         action: model.actions.startMeetingVideoCall)
+
+                Button(action: model.actions.makeMeetingNotes) {
+                    VStack(spacing: 2) {
+                        Text("녹음 파일로 만들기…")
+                            .font(.system(size: 12.5, weight: .semibold)).foregroundColor(.ink)
+                        Text("파일을 여기에 끌어다 놓아도 됩니다")
+                            .font(.system(size: 10.5)).foregroundColor(.text3)
+                    }
+                    .frame(maxWidth: .infinity).padding(.vertical, 11)
+                    .background(dropTargeted ? Color.fill : Color.clear)
+                    .overlay(RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(dropTargeted ? Color.coral : Color.lineStrong,
+                                      style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                    .cornerRadius(10)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
+                    guard let provider = providers.first else { return false }
+                    _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                        guard let url else { return }
+                        DispatchQueue.main.async { model.actions.makeMeetingNotesFrom(url) }
+                    }
+                    return true
+                }
+
+                // 회의 내용이라 "어디로 가는지"가 제일 큰 걱정이다. 시작하는 자리에서 먼저 말한다.
+                Text("녹음은 이 맥 밖으로 나가지 않습니다 · 요약 때만 글을 AI 로 보냅니다")
+                    .font(.system(size: 10.5)).foregroundColor(.text3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 12)
+
+            HairLine()
+
+            VStack(spacing: 0) {
+                HStack {
+                    Text("최근 회의록").font(.system(size: 12, weight: .semibold)).foregroundColor(.text2)
+                    Spacer()
+                }
+                .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 4)
+
+                Text("아직 만든 회의록이 없어요.")
+                    .font(.system(size: 12)).foregroundColor(.text4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16).padding(.top, 6).padding(.bottom, 14)
+            }
+            .background(Color.paperSoft)
+        }
+    }
+
+    /// 누르면 바로 녹음이 시작되는 줄. 코랄 점으로 "지금 시작한다"를 알린다.
+    private func startRow(title: String, detail: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 9) {
+                Circle().fill(Color.coral).frame(width: 7, height: 7)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).font(.system(size: 12.5, weight: .semibold)).foregroundColor(.ink)
+                    Text(detail).font(.system(size: 10.5)).foregroundColor(.text3)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 9)
+            .background(Color.fill)
+            .cornerRadius(10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }

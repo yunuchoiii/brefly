@@ -1121,7 +1121,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func wireModelActions() {
         model.actions.startRecording = { [weak self] in self?.startRecording() }
         model.actions.cancelMeetingNotes = { [weak self] in self?.cancelMeetingNotes() }
-        model.actions.startMeetingRecording = { [weak self] in self?.startMeetingRecording() }
+        model.actions.startMeetingInPerson = { [weak self] in self?.startMeetingInPerson() }
+        model.actions.makeMeetingNotesFrom = { [weak self] url in
+            self?.popover.performClose(nil)
+            self?.ensureModelThenMakeNotes(for: url)
+        }
+        model.actions.startMeetingVideoCall = { [weak self] in self?.startMeetingVideoCall() }
         model.actions.stopMeetingRecording = { [weak self] in self?.stopMeetingRecording() }
         model.actions.makeMeetingNotes = { [weak self] in
             self?.popover.performClose(nil)
@@ -1313,10 +1318,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             stopItem.target = self
             menu.addItem(stopItem)
         } else if !isMakingMeetingNotes {
-            let startItem = NSMenuItem(title: "지금부터 회의 녹음",
-                                       action: #selector(startMeetingRecording), keyEquivalent: "")
-            startItem.target = self
-            menu.addItem(startItem)
+            let inPerson = NSMenuItem(title: "지금 녹음 — 대면 회의",
+                                      action: #selector(startMeetingInPerson), keyEquivalent: "")
+            inPerson.target = self
+            menu.addItem(inPerson)
+            let video = NSMenuItem(title: "지금 녹음 — 화상 회의",
+                                   action: #selector(startMeetingVideoCall), keyEquivalent: "")
+            video.target = self
+            menu.addItem(video)
         }
 
         let meetingItem = NSMenuItem(title: "녹음 파일로 회의록 만들기…",
@@ -1672,26 +1681,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     // MARK: 회의를 지금 녹음하기
 
-    @objc private func startMeetingRecording() {
+    @objc private func startMeetingInPerson() { beginMeetingRecording(captureSystem: false) }
+
+    @objc private func startMeetingVideoCall() {
+        // ⚠️ 화면 기록 권한이 없으면 상대 목소리를 못 잡는다. 그냥 시작하면 회의가 끝난 뒤에야
+        //    내 말만 남은 걸 알게 된다 — 되돌릴 수 없는 손해다. 먼저 묻는다.
+        Task { @MainActor in
+            if await SystemAudioRecorder.hasPermission() {
+                self.beginMeetingRecording(captureSystem: true)
+                return
+            }
+            let alert = NSAlert()
+            alert.messageText = "상대 목소리를 잡으려면 화면 기록 권한이 필요합니다"
+            alert.informativeText = """
+                화상회의에서 상대 목소리는 스피커로 나가기 때문에 마이크에 잡히지 않습니다. \
+                macOS 는 그 소리를 '화면 기록' 권한으로 다룹니다. 화면을 저장하지는 않습니다.
+
+                권한 없이 녹음하면 내 목소리만 남습니다.
+                """
+            alert.addButton(withTitle: "설정 열기")
+            alert.addButton(withTitle: "내 목소리만 녹음")
+            alert.addButton(withTitle: "취소")
+            NSApp.activate(ignoringOtherApps: true)
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                    NSWorkspace.shared.open(url)
+                }
+                self.setState(self.state, message: "권한을 켠 뒤 다시 눌러 주세요")
+            case .alertSecondButtonReturn:
+                self.beginMeetingRecording(captureSystem: false)
+            default:
+                break
+            }
+        }
+    }
+
+    private func beginMeetingRecording(captureSystem: Bool) {
         guard !isMakingMeetingNotes, meetingRecorder == nil else { return }
         let recorder = MeetingRecorder()
         meetingRecorder = recorder
         Task { @MainActor in
             do {
-                _ = try await recorder.start()
+                _ = try await recorder.start(captureSystem: captureSystem)
             } catch {
                 self.meetingRecorder = nil
                 self.setState(self.state, message: "회의 녹음을 시작하지 못했습니다: \(error.localizedDescription)")
                 return
             }
-            // 시스템 소리를 못 잡아도 녹음은 이어 간다. 대면 회의라면 마이크만으로 충분하다.
-            // 다만 화상회의라면 내 말만 남으므로 화면에서 분명히 알린다.
-            let capturing = recorder.systemAudioError == nil
+            let capturing = captureSystem && recorder.systemAudioError == nil
             self.model.phase = .meetingRecording(AppModel.MeetingRecordingRun(
-                startedAt: Date(), capturingSystem: capturing))
+                startedAt: Date(), capturingSystem: capturing, inPerson: !captureSystem))
             self.showPopover()
             self.meetingRing = (nil, .working)
-            self.setState(self.state, message: capturing ? "회의 녹음 중" : "회의 녹음 중 — 상대 목소리는 못 잡습니다")
+            self.setState(self.state, message: captureSystem && !capturing
+                          ? "회의 녹음 중 — 상대 목소리는 못 잡습니다"
+                          : "회의 녹음 중")
             self.rebuildMenu()
         }
     }

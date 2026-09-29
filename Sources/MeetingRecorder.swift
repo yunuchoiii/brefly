@@ -38,7 +38,9 @@ final class MeetingRecorder {
 
     // MARK: - 시작과 멈춤
 
-    func start() async throws -> Session {
+    /// - Parameter captureSystem: 스피커로 나가는 소리(상대 목소리)도 잡을지.
+    ///   대면 회의는 한 마이크에 다 들어오므로 필요 없다 — 그때는 화면 기록 권한도 안 묻는다.
+    func start(captureSystem: Bool = true) async throws -> Session {
         let stamp = DateFormatter()
         stamp.dateFormat = "yyyy-MM-dd-HHmmss"
         let dir = FileManager.default.homeDirectoryForCurrentUser
@@ -78,6 +80,7 @@ final class MeetingRecorder {
         try engine.start()
 
         // 시스템 소리는 실패해도 회의를 접지 않는다. 대면 회의라면 애초에 필요 없다.
+        if captureSystem {
         do {
             systemTrack = try TrackWriter(url: session.system)
             systemAudio.onBuffer = { [weak self] buffer in self?.systemTrack?.write(buffer) }
@@ -86,6 +89,7 @@ final class MeetingRecorder {
             systemAudioError = error
             systemTrack = nil
             Log.write("회의 녹음: 시스템 소리를 못 잡는다 — \(error.localizedDescription). 마이크만 남긴다.")
+        }
         }
 
         self.session = session

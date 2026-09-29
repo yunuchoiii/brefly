@@ -85,14 +85,21 @@ enum PreviewRenderer {
             startedAt: Date().addingTimeInterval(-96), stage: .summarizing, fraction: nil))
         snap("1d-meeting-summarizing")
 
+        // 회의록 탭. 시작 방법 셋이 보여야 한다.
+        // ⚠️ 앞 단계에서 phase 가 남아 있으면 그 화면이 이긴다. 대기로 돌려놓고 찍는다.
+        model.phase = .idle
+        model.tab = .meeting
+        snap("1f-meeting-tab")
+        model.tab = .dictation
+
         // 회의를 지금 녹음하는 중. 시스템 소리를 못 잡는 경우도 같이 본다 —
         // 그때는 화상회의에서 내 말만 남으므로 경고가 보여야 한다.
         model.phase = .meetingRecording(AppModel.MeetingRecordingRun(
-            startedAt: Date().addingTimeInterval(-372), capturingSystem: true))
-        snap("1e-meeting-recording")
+            startedAt: Date().addingTimeInterval(-372), capturingSystem: true, inPerson: false))
+        snap("1e-meeting-recording-video")
         model.phase = .meetingRecording(AppModel.MeetingRecordingRun(
-            startedAt: Date().addingTimeInterval(-372), capturingSystem: false))
-        snap("1e-meeting-recording-mic-only")
+            startedAt: Date().addingTimeInterval(-372), capturingSystem: false, inPerson: true))
+        snap("1e-meeting-recording-in-person")
 
         model.retryRecord = samples[0]
         model.phase = .error("정리에 실패해서 원문을 그대로 복사했어요\n\n"

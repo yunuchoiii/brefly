@@ -16,6 +16,9 @@ final class AppModel: ObservableObject {
         /// 시스템 소리(상대 목소리)를 잡고 있는지. 화면 기록 권한이 없으면 마이크만 남는다 —
         /// 그 상태로 화상회의를 녹음하면 내 말만 남으므로 반드시 알려야 한다.
         let capturingSystem: Bool
+        /// 대면 회의로 시작했는지. 대면이면 상대 목소리를 안 잡는 것이 정상이라
+        /// 경고를 띄우면 안 된다 — 잘못된 경고는 진짜 경고까지 무시하게 만든다.
+        let inPerson: Bool
 
         var elapsedText: String {
             let t = Int(Date().timeIntervalSince(startedAt))
@@ -71,8 +74,18 @@ final class AppModel: ObservableObject {
         case history
     }
 
+    /// 팝오버 탭. 회의록은 시작하는 길이 셋이라 받아쓰기와 한 화면에 두면 지저분해진다.
+    enum Tab {
+        case dictation
+        case meeting
+    }
+
     @Published var phase: Phase = .idle
     @Published var screen: Screen = .main
+
+    /// ⚠️ 마지막에 본 탭을 기억하지 않는다. 기억하면 팝오버를 열었을 때 "녹음 버튼이 어디 갔지?"가 된다.
+    ///    상황이 정한다 — 회의를 녹음하거나 회의록을 만드는 중이면 회의록 탭, 아니면 늘 받아쓰기 탭.
+    @Published var tab = Tab.dictation
 
     // 녹음 중
     @Published var elapsed: TimeInterval = 0
@@ -109,9 +122,12 @@ final class AppModel: ObservableObject {
         /// 녹음 파일을 골라 회의록을 만든다. 오른쪽 클릭 메뉴에도 같은 항목이 있지만,
         /// 사람들이 실제로 보는 것은 이 팝오버라 여기가 진짜 입구다.
         var makeMeetingNotes: () -> Void = {}
+        /// 파일을 끌어다 놓았을 때. 고르기 창을 건너뛴다.
+        var makeMeetingNotesFrom: (URL) -> Void = { _ in }
         var cancelMeetingNotes: () -> Void = {}
-        /// 지금부터 회의를 녹음한다. 파일 고르기와 다른 입구다.
-        var startMeetingRecording: () -> Void = {}
+        /// 지금부터 회의를 녹음한다. 대면은 마이크만, 화상은 스피커 소리까지 잡는다.
+        var startMeetingInPerson: () -> Void = {}
+        var startMeetingVideoCall: () -> Void = {}
         var stopMeetingRecording: () -> Void = {}
         var openSettings: () -> Void = {}
         var quit: () -> Void = {}
