@@ -56,7 +56,17 @@ enum MeetingNotes {
         - 확정된 것만. "하기로 했다" 수준으로 말이 맺힌 것만 적는다.
 
         ## 할 일
-        - 할 일 — 담당자(말한 경우만), 마감(말한 경우만)
+        할 일을 먼저 쓰고, 원문에서 **말한 것만** 뒤에 붙인다. 꼴은 이렇다.
+
+            - <할 일> — <담당자>, <마감>
+            - <할 일> — <담당자>
+            - <할 일>
+
+        담당자나 마감을 말하지 않았으면 **세 번째 꼴처럼 아무것도 붙이지 않는다.**
+        "담당자: (없음)", "마감: 미정" 같은 빈 칸을 만들지 않는다 — 읽을 것만 늘고 아무 정보도 없다.
+
+        ⚠️ 위 꺾쇠는 자리를 보여 주는 표시일 뿐이다. **꺾쇠 안의 말을 결과에 그대로 쓰지 않는다.**
+        사람 이름·직함·회사·날짜는 원문에서 실제로 들린 것만 쓴다.
 
         ## 논의한 것
         - 결론이 안 난 것, 의견이 갈린 것. 왜 갈렸는지까지.
@@ -100,6 +110,36 @@ enum MeetingNotes {
                 })
             }
         }
+    }
+
+    // MARK: - 모델이 남긴 빈 칸 지우기
+
+    /// "— 담당자: (없음), 마감: (미정)" 처럼 **비었다는 사실만 적은 꼬리표**를 떼어낸다.
+    ///
+    /// 프롬프트로 여러 번 막아 봤지만 모델은 표의 꼴을 지키려고 계속 빈 칸을 채웠다.
+    /// 금지어를 늘리면 "(미정)" 이 "(없음)" 으로 바뀔 뿐이었고, 빈 칸 대신 예시를 보여 줬더니
+    /// **예시에 쓴 사람 이름을 결과에 그대로 베껴 넣었다**(2026-09-29, 원문에 없는 "김 과장"이 담당자로
+    /// 올라갔다). 회의록에 없는 담당자가 생기는 쪽이 훨씬 나쁘다.
+    ///
+    /// 그래서 프롬프트는 안전한 쪽(꺾쇠 자리표시)으로 두고, 꼬리표는 코드가 지운다.
+    /// 확률에 기대는 것보다 확실하다.
+    static func tidy(_ text: String) -> String {
+        let empty = "(?:\\(?(?:없음|미정|없습니다|해당\\s*없음|TBD|N/?A|-)\\)?)"
+        let label = "(?:담당자|담당|마감|기한|일정)"
+        let patterns = [
+            // "— 담당자: (없음), 마감: (없음)" 처럼 꼬리 전체가 빈 칸뿐이면 꼬리째 지운다
+            "\\s*[—–-]\\s*(?:\(label)\\s*[:：]?\\s*\(empty)\\s*[,·]?\\s*)+$",
+            // "…, 마감: 미정" 처럼 뒤쪽 하나만 비었으면 그것만 지운다
+            "\\s*[,·]\\s*\(label)\\s*[:：]?\\s*\(empty)\\s*$",
+        ]
+        var lines = text.components(separatedBy: .newlines)
+        for i in lines.indices {
+            for pattern in patterns {
+                lines[i] = lines[i].replacingOccurrences(of: pattern, with: "",
+                                                         options: [.regularExpression], range: nil)
+            }
+        }
+        return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // MARK: - 요약
@@ -153,8 +193,7 @@ enum MeetingNotes {
                 completion(.failure(Failure.badResponse(code, String(data: data, encoding: .utf8) ?? "")))
                 return
             }
-            let text = parts.compactMap { $0["text"] as? String }.joined()
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let text = tidy(parts.compactMap { $0["text"] as? String }.joined())
             completion(text.isEmpty ? .failure(Failure.emptyAnswer) : .success(text))
         }.resume()
     }
