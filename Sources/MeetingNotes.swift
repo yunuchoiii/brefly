@@ -42,6 +42,15 @@ enum MeetingNotes {
     ///
     /// **지어내지 말라**를 가장 앞에 둔다. 긴 글을 넣으면 모델이 회의록의 꼴을 갖추려고
     /// 없는 담당자와 마감을 채워 넣는다. 회의록은 그러면 못 쓴다 — 틀린 회의록은 없느니만 못하다.
+    /// 화자를 아는 경우에 앞에 덧붙이는 말. 직접 녹음하면 마이크=나, 시스템 소리=상대로
+    /// 채널이 갈려 있어서 누가 말했는지 안다. 그때는 "추측하지 말라"가 오히려 방해가 된다.
+    private static let speakerNote = """
+        각 줄 앞의 "나:" 와 "상대:" 는 실제로 갈라 녹음한 것이라 믿어도 된다.
+        다만 "상대" 안에 여러 사람이 섞여 있을 수 있다. 몇 명인지는 알 수 없으므로 세지 않는다.
+        담당자를 적을 때 "나"/"상대" 말고 실제 이름은 원문에서 부른 것만 쓴다.
+
+        """
+
     private static let instruction = """
         아래 <회의록> 안은 회의를 받아쓴 것이다. 이것을 회의록으로 정리한다.
 
@@ -149,6 +158,62 @@ enum MeetingNotes {
         }
     }
 
+
+    /// 직접 녹음한 회의. 마이크(나)와 시스템 소리(상대)가 따로 있다.
+    ///
+    /// 파일 하나를 넣는 것과 다른 점은 **누가 말했는지 안다**는 것이다. 화상회의에서는
+    /// 이 갈래가 곧 화자 구분이라, 화자 분리 모델 없이도 "나 / 상대"를 가를 수 있다.
+    static func makeFromTracks(mic: URL, system: URL?, recordedAt: Date,
+                               cancel: CancelToken? = nil,
+                               onProgress: @escaping (Progress) -> Void,
+                               completion: @escaping (Swift.Result<Result, Error>) -> Void) {
+        onProgress(Progress(stage: .transcribing, fraction: 0))
+        let started = Date()
+        DispatchQueue.global(qos: .userInitiated).async {
+            let model = ModelStore.transcriptionModel
+            let hasSystem = system != nil
+            do {
+                // 두 트랙을 잇달아 받아쓴다. 진행률은 둘을 합쳐 하나로 보여 준다 —
+                // 0%까지 갔다가 다시 0%부터 오르면 멈춘 줄 안다.
+                let micSegments = try Whisper.transcribe(
+                    audio: mic, model: model, cancel: cancel,
+                    onProgress: { onProgress(Progress(stage: .transcribing,
+                                                      fraction: hasSystem ? $0 / 2 : $0)) })
+                var systemSegments: [Whisper.Segment] = []
+                if let system {
+                    systemSegments = try Whisper.transcribe(
+                        audio: system, model: model, cancel: cancel,
+                        onProgress: { onProgress(Progress(stage: .transcribing, fraction: 0.5 + $0 / 2)) })
+                }
+
+                // 용어 치환은 합친 글에 한 번만 건다.
+                let merged = Glossary.apply(to: EchoFilter.merge(mic: micSegments, system: systemSegments))
+                let transcribeSeconds = Date().timeIntervalSince(started)
+                guard merged.count > 30 else {
+                    completion(.failure(Failure.emptyAnswer))
+                    return
+                }
+                if cancel?.isCancelled == true {
+                    completion(.failure(Whisper.Failure.cancelled))
+                    return
+                }
+                onProgress(Progress(stage: .summarizing, fraction: nil))
+                let summarizeStarted = Date()
+                summarize(merged, speakersKnown: hasSystem) { result in
+                    completion(result.map {
+                        Result(transcript: merged,
+                               notes: $0,
+                               segments: micSegments + systemSegments,
+                               transcribeSeconds: transcribeSeconds,
+                               summarizeSeconds: Date().timeIntervalSince(summarizeStarted))
+                    })
+                }
+            } catch {
+                completion(.failure(error))
+            }
+        }
+    }
+
     // MARK: - 모델이 남긴 빈 칸 지우기
 
     /// "— 담당자: (없음), 마감: (미정)" 처럼 **비었다는 사실만 적은 꼬리표**를 떼어낸다.
@@ -184,7 +249,7 @@ enum MeetingNotes {
     /// ⚠️ 받아쓰기 쪽 Gemini 호출(`GeminiClient`)을 그대로 쓰지 않는다. 거기는 출력이 2048 토큰으로
     ///    묶여 있고 `PolishStyle` 에 매여 있어서, 회의록을 넣으면 중간에 잘린다.
     ///    호출 코드가 두 벌이 된 셈인데, 받아쓰기 쪽을 건드려 짧은 말 처리를 흔드는 것보다 낫다고 봤다.
-    private static func summarize(_ transcript: String,
+    private static func summarize(_ transcript: String, speakersKnown: Bool = false,
                                   completion: @escaping (Swift.Result<String, Error>) -> Void) {
         guard let key = KeychainStore.read(.gemini), !key.isEmpty else {
             completion(.failure(Failure.noAPIKey))
@@ -198,7 +263,7 @@ enum MeetingNotes {
         }
 
         let body: [String: Any] = [
-            "contents": [["parts": [["text": "\(instruction)\n\n<회의록>\n\(transcript)\n</회의록>"]]]],
+            "contents": [["parts": [["text": "\(speakersKnown ? speakerNote : "")\(instruction)\n\n<회의록>\n\(transcript)\n</회의록>"]]]],
             "generationConfig": [
                 "temperature": 0.2,
                 // 회의록은 길다. 받아쓰기 쪽 2048 로는 표가 중간에 끊긴다.

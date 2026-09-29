@@ -85,6 +85,15 @@ enum PreviewRenderer {
             startedAt: Date().addingTimeInterval(-96), stage: .summarizing, fraction: nil))
         snap("1d-meeting-summarizing")
 
+        // 회의를 지금 녹음하는 중. 시스템 소리를 못 잡는 경우도 같이 본다 —
+        // 그때는 화상회의에서 내 말만 남으므로 경고가 보여야 한다.
+        model.phase = .meetingRecording(AppModel.MeetingRecordingRun(
+            startedAt: Date().addingTimeInterval(-372), capturingSystem: true))
+        snap("1e-meeting-recording")
+        model.phase = .meetingRecording(AppModel.MeetingRecordingRun(
+            startedAt: Date().addingTimeInterval(-372), capturingSystem: false))
+        snap("1e-meeting-recording-mic-only")
+
         model.retryRecord = samples[0]
         model.phase = .error("정리에 실패해서 원문을 그대로 복사했어요\n\n"
             + APIErrorText.describe(service: "Gemini", code: 503,

@@ -24,6 +24,8 @@ struct PopoverRoot: View {
                     PolishingView(model: model)
                 case .meeting(let run):
                     MeetingProgressView(model: model, run: run)
+                case .meetingRecording(let run):
+                    MeetingRecordingView(model: model, run: run)
                 case .done(let record, let delivery):
                     DoneView(model: model, record: record, delivery: delivery)
                 case .error(let message):
@@ -117,8 +119,9 @@ struct IdleView: View {
             HairLine()
 
             HStack(spacing: 14) {
-                Button("회의록 만들기…", action: model.actions.makeMeetingNotes)
+                Button("회의 녹음", action: model.actions.startMeetingRecording)
                     .buttonStyle(.plain).fontWeight(.semibold).foregroundColor(.ink)
+                Button("녹음 파일로…", action: model.actions.makeMeetingNotes).buttonStyle(.plain)
                 Spacer()
                 Button("설정…", action: model.actions.openSettings).buttonStyle(.plain)
                 Button("종료", action: model.actions.quit).buttonStyle(.plain)
@@ -689,6 +692,56 @@ struct MeetingProgressView: View {
             .frame(width: 13, height: 13)
         } else {
             Circle().stroke(Color.radioOff.opacity(0.45), lineWidth: 1.5).frame(width: 13, height: 13)
+        }
+    }
+}
+
+/// 회의를 지금 녹음하는 중. 받아쓰기 녹음과 달리 몇십 분씩 가므로 경과 시간을 크게 보여 준다.
+struct MeetingRecordingView: View {
+    @ObservedObject var model: AppModel
+    let run: AppModel.MeetingRecordingRun
+    @State private var tick = Date()
+    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        VStack(spacing: 14) {
+            HStack(spacing: 8) {
+                Circle().fill(Color.coral).frame(width: 9, height: 9)
+                Text("회의 녹음 중").font(.system(size: 14, weight: .bold)).foregroundColor(.ink)
+            }
+            Text(run.elapsedText)
+                .font(.system(size: 30, weight: .heavy, design: .rounded))
+                .foregroundColor(.ink)
+                .id(tick)
+
+            VStack(alignment: .leading, spacing: 4) {
+                row(on: true, text: "내 목소리 — 마이크")
+                row(on: run.capturingSystem,
+                    text: run.capturingSystem ? "상대 목소리 — 스피커로 나가는 소리"
+                                              : "상대 목소리 — 못 잡습니다 (화면 기록 권한 필요)")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(11)
+            .background(Color.paperSoft)
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.line, lineWidth: 1))
+            .cornerRadius(10)
+
+            OutlineButton("녹음 마치고 회의록 만들기") { model.actions.stopMeetingRecording() }
+
+            Text("이 창을 닫아도 녹음은 계속됩니다")
+                .font(.system(size: 10.5)).foregroundColor(.text3)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 16)
+        .onReceive(timer) { tick = $0 }
+    }
+
+    private func row(on: Bool, text: String) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: on ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .font(.system(size: 11)).foregroundColor(on ? .coral : .text4)
+            Text(text).font(.system(size: 11.5)).foregroundColor(on ? .ink : .text3)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
     }
 }

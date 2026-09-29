@@ -10,6 +10,19 @@ final class AppModel: ObservableObject {
         case viewing    // 기록에서 열어 본 것 — 토스트 없음
     }
 
+    /// 회의를 지금 녹음하는 중에 보여 줄 것.
+    struct MeetingRecordingRun {
+        let startedAt: Date
+        /// 시스템 소리(상대 목소리)를 잡고 있는지. 화면 기록 권한이 없으면 마이크만 남는다 —
+        /// 그 상태로 화상회의를 녹음하면 내 말만 남으므로 반드시 알려야 한다.
+        let capturingSystem: Bool
+
+        var elapsedText: String {
+            let t = Int(Date().timeIntervalSince(startedAt))
+            return String(format: "%d:%02d", t / 60, t % 60)
+        }
+    }
+
     /// 회의록이 도는 동안 팝오버가 보여 줄 것. 메뉴바 고리와 같은 값을 쓴다.
     struct MeetingRun {
         let fileName: String
@@ -47,6 +60,8 @@ final class AppModel: ObservableObject {
         case polishing
         /// 녹음 파일로 회의록을 만드는 중. 받아쓰기와 달리 1~2분이 걸려서 단계를 보여 줘야 한다.
         case meeting(MeetingRun)
+        /// 회의를 **지금 녹음하는 중**. 파일로 만드는 것과 달리 끝이 언제일지 사용자가 정한다.
+        case meetingRecording(MeetingRecordingRun)
         case done(SummaryRecord, Delivery)
         case error(String)
     }
@@ -95,6 +110,9 @@ final class AppModel: ObservableObject {
         /// 사람들이 실제로 보는 것은 이 팝오버라 여기가 진짜 입구다.
         var makeMeetingNotes: () -> Void = {}
         var cancelMeetingNotes: () -> Void = {}
+        /// 지금부터 회의를 녹음한다. 파일 고르기와 다른 입구다.
+        var startMeetingRecording: () -> Void = {}
+        var stopMeetingRecording: () -> Void = {}
         var openSettings: () -> Void = {}
         var quit: () -> Void = {}
         var copy: (SummaryRecord) -> Void = { _ in }
