@@ -72,6 +72,34 @@ if let i = CommandLine.arguments.firstIndex(of: "--prompt"), i + 1 < CommandLine
     exit(0)
 }
 
+// 진단용: 소리 파일만 받아쓴다. --from 초 --for 초 로 구간을, --on-device 로 온디바이스 인식을 고른다.
+if let i = CommandLine.arguments.firstIndex(of: "--transcribe"), i + 1 < CommandLine.arguments.count {
+    func number(_ flag: String, _ fallback: Double) -> Double {
+        guard let j = CommandLine.arguments.firstIndex(of: flag), j + 1 < CommandLine.arguments.count,
+              let v = Double(CommandLine.arguments[j + 1]) else { return fallback }
+        return v
+    }
+    let done = DispatchSemaphore(value: 0)
+    Transcriber.run(CommandLine.arguments[i + 1],
+                    from: number("--from", 0),
+                    seconds: number("--for", 0),
+                    onDevice: CommandLine.arguments.contains("--on-device")) { result in
+        switch result {
+        case .success(let r):
+            print("OK (\(String(format: "%.1f", r.seconds))초) 글자 \(r.text.count)")
+            print("구간 \(r.segments)개, 시각이 0이 아닌 것 \(r.timed)개, 마지막 시각 \(String(format: "%.2f", r.lastTimestamp))초")
+            let out = "/tmp/brefly-transcribe.txt"
+            try? r.text.write(toFile: out, atomically: true, encoding: .utf8)
+            print("전문: \(out)")
+        case .failure(let e):
+            print("FAIL \(e.localizedDescription)")
+        }
+        done.signal()
+    }
+    _ = done.wait(timeout: .now() + 1800)
+    exit(0)
+}
+
 if let i = CommandLine.arguments.firstIndex(of: "--polish"), i + 1 < CommandLine.arguments.count {
     let done = DispatchSemaphore(value: 0)
     let started = Date()
