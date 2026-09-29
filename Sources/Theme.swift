@@ -174,7 +174,10 @@ enum Logo {
     static func menuBarIcon(progress: Double?, color: NSColor, dark: Bool,
                             rotation: Double = 0) -> NSImage {
         let size: CGFloat = 18
-        let image = NSImage(size: NSSize(width: size, height: size), flipped: true) { _ in
+        // ⚠️ 점은 로고의 **오른쪽 끝**(viewBox 32 중 x=26.5)에 있다. 그 자리에 점보다 큰 고리를 그리면
+        //    아이콘 폭을 넘어 잘린다(실제로 잘렸다, 2026-09-29). 그래서 가로만 넓힌 캔버스에 그린다.
+        let overflow: CGFloat = 5
+        let image = NSImage(size: NSSize(width: size + overflow, height: size), flipped: true) { _ in
             let s = size / viewBox
             (dark ? NSColor.white : NSColor.black).withAlphaComponent(0.85).setStroke()
             let wavePath = wave(scale: s)
@@ -183,8 +186,9 @@ enum Logo {
             let center = CGPoint(x: dotCenter.x * s, y: dotCenter.y * s)
             // ⚠️ 메뉴바 아이콘은 18pt 다. 처음엔 점 크기에 맞춰 가늘게 그렸더니 "안 보인다"는 말을 들었다.
             //    점보다 확실히 크고 굵게 그려야 읽힌다.
-            let radius = dotRadius * s * 1.7
-            let width = max(2.2, dotRadius * s * 1.15)
+            // 1.7배로 했더니 왼쪽이 파형 꼬리에 붙었다. 파형과 간격이 보이는 선까지만 키운다.
+            let radius = dotRadius * s * 1.5
+            let width = max(2.0, dotRadius * s * 1.0)
 
             // 바탕 고리 — 얼마나 남았는지 보이게 깐다. 너무 흐리면 0% 일 때 아무것도 없어 보인다.
             color.withAlphaComponent(0.4).setStroke()

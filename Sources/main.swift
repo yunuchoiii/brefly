@@ -91,11 +91,15 @@ if let i = CommandLine.arguments.firstIndex(of: "--render-menubar"), i + 1 < Com
             let icon: NSImage = state.kind.map {
                 Logo.menuBarIcon(progress: state.progress, color: $0.color(dark: dark), dark: dark)
             } ?? Logo.mark(size: 18, wave: dark ? .white : .black, dot: dark ? .white : .black)
-            let canvas = NSImage(size: NSSize(width: side, height: side))
+            // ⚠️ 진행 고리가 붙은 아이콘은 가로가 더 넓다. 정사각에 욱여넣으면 일그러져서
+            //    실제와 다른 그림을 보게 된다 — 진단이 거짓말하면 없느니만 못하다.
+            let scale = side / icon.size.height
+            let w = icon.size.width * scale
+            let canvas = NSImage(size: NSSize(width: w, height: side))
             canvas.lockFocus()
             (dark ? NSColor(white: 0.13, alpha: 1) : NSColor(white: 0.96, alpha: 1)).setFill()
-            NSRect(x: 0, y: 0, width: side, height: side).fill()
-            icon.draw(in: NSRect(x: 0, y: 0, width: side, height: side),
+            NSRect(x: 0, y: 0, width: w, height: side).fill()
+            icon.draw(in: NSRect(x: 0, y: 0, width: w, height: side),
                       from: .zero, operation: .sourceOver, fraction: 1)
             canvas.unlockFocus()
             if let tiff = canvas.tiffRepresentation,
