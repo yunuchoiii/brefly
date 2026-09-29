@@ -627,13 +627,14 @@ struct MeetingProgressView: View {
 
     private struct Step {
         let title: String
-        let detail: String
+        /// 없으면 제목만 놓는다. 제목이 이미 뜻을 다 말하는 단계가 있다.
+        let detail: String?
     }
 
     private let steps = [
-        Step(title: "받아쓰기", detail: "이 맥 안에서 처리합니다 · 인터넷에 보내지 않습니다."),
-        Step(title: "요약하기", detail: "받아 적은 글만 AI 모델로 보냅니다."),
-        Step(title: "저장하고 복사하기", detail: "녹음 파일 옆에 .md 로 저장합니다."),
+        Step(title: "받아쓰기", detail: "이 컴퓨터 내부적으로 처리합니다."),
+        Step(title: "요약하기", detail: "받아 적은 글을 AI가 요약합니다."),
+        Step(title: "저장하고 복사하기", detail: nil),
     ]
 
     var body: some View {
@@ -654,8 +655,10 @@ struct MeetingProgressView: View {
                             Text(step.title)
                                 .font(.system(size: 12.5, weight: index == run.stepIndex ? .semibold : .regular))
                                 .foregroundColor(index <= run.stepIndex ? .ink : .text3)
-                            Text(step.detail).font(.system(size: 10.5)).foregroundColor(.text3)
-                                .fixedSize(horizontal: false, vertical: true)
+                            if let detail = step.detail {
+                                Text(detail).font(.system(size: 10.5)).foregroundColor(.text3)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                         Spacer(minLength: 0)
                     }
@@ -855,7 +858,8 @@ struct MeetingTabView: View {
                 }
                 .padding(.top, 2)
             }
-            .padding(.horizontal, 16).padding(.bottom, 12)
+            // 위 구분선에 카드가 붙어 있었다. 받아쓰기 탭의 첫 버튼과 같은 14 로 띄운다.
+            .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 12)
 
             HairLine()
 
