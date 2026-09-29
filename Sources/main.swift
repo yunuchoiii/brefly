@@ -72,6 +72,27 @@ if let i = CommandLine.arguments.firstIndex(of: "--prompt"), i + 1 < CommandLine
     exit(0)
 }
 
+// 진단용: 녹음 파일 하나를 회의록으로 만든다. 받아쓰기부터 요약까지 한 번에 돈다.
+if let i = CommandLine.arguments.firstIndex(of: "--meeting-notes"), i + 1 < CommandLine.arguments.count {
+    let audio = URL(fileURLWithPath: CommandLine.arguments[i + 1])
+    let done = DispatchSemaphore(value: 0)
+    MeetingNotes.make(audio: audio, onProgress: { print("  \($0)") }) { result in
+        switch result {
+        case .success(let notes):
+            print("OK 받아쓰기 \(String(format: "%.1f", notes.transcribeSeconds))초 + 요약 \(String(format: "%.1f", notes.summarizeSeconds))초")
+            print("   원문 \(notes.transcript.count)자 → 회의록 \(notes.notes.count)자\n")
+            print(notes.notes)
+            try? notes.notes.write(toFile: "/tmp/brefly-meeting.md", atomically: true, encoding: .utf8)
+            try? notes.transcript.write(toFile: "/tmp/brefly-meeting-raw.txt", atomically: true, encoding: .utf8)
+        case .failure(let error):
+            print("FAIL \(error.localizedDescription)")
+        }
+        done.signal()
+    }
+    _ = done.wait(timeout: .now() + 1800)
+    exit(0)
+}
+
 // 진단용: 받아쓰기 모델을 내려받는다. 547MB 라 진행률을 보여 준다.
 if CommandLine.arguments.contains("--fetch-model") {
     let done = DispatchSemaphore(value: 0)
