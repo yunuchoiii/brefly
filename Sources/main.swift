@@ -72,6 +72,34 @@ if let i = CommandLine.arguments.firstIndex(of: "--prompt"), i + 1 < CommandLine
     exit(0)
 }
 
+// 진단용: 마이크와 시스템 소리를 함께 회의 녹음한다. 두 갈래가 제대로 갈려 들어오는지 본다.
+if let i = CommandLine.arguments.firstIndex(of: "--record-meeting"), i + 1 < CommandLine.arguments.count {
+    let seconds = Double(CommandLine.arguments[i + 1]) ?? 10
+    let done = DispatchSemaphore(value: 0)
+    Task {
+        let recorder = MeetingRecorder()
+        do {
+            let session = try await recorder.start()
+            if let e = recorder.systemAudioError { print("주의: 시스템 소리 없음 — \(e.localizedDescription)") }
+            print("\(seconds)초 동안 녹음합니다 — \(session.directory.path)")
+            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            await recorder.stop()
+            func size(_ url: URL) -> String {
+                let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+                return "\((bytes ?? 0) / 1024)KB"
+            }
+            print("마이크  \(recorder.micBuffers)조각  \(size(session.mic))")
+            print("시스템  \(recorder.systemBuffers)조각  \(size(session.system))")
+            print(recorder.micBuffers > 0 ? "OK \(session.directory.path)" : "FAIL 마이크가 하나도 안 들어왔습니다")
+        } catch {
+            print("FAIL \(error.localizedDescription)")
+        }
+        done.signal()
+    }
+    _ = done.wait(timeout: .now() + seconds + 60)
+    exit(0)
+}
+
 // 진단용: 스피커로 나가는 소리를 잡아 WAV 로 남긴다. 화상회의 상대방 목소리가 실제로 들어오는지 본다.
 if let i = CommandLine.arguments.firstIndex(of: "--capture-system-audio"), i + 2 < CommandLine.arguments.count {
     let seconds = Double(CommandLine.arguments[i + 1]) ?? 10
