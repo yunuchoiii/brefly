@@ -16,6 +16,11 @@ enum EchoFilter {
     private static let slack: Double = 2.0
     /// 같은 말로 보는 기준. 받아쓰기가 조금씩 다르게 들으므로 완전히 같기를 기대하면 안 된다.
     private static let sameEnough: Double = 0.62
+    /// ⚠️ 이보다 짧은 말은 **절대 지우지 않는다.** "네", "맞아요", "그렇죠" 같은 맞장구는
+    ///    두 사람이 같은 때 같은 말을 하는 일이 흔하다. 에코가 아니라 진짜 내 말이다.
+    ///    중복된 맞장구가 한 줄 남는 것보다 내 말이 사라지는 쪽이 훨씬 나쁘다.
+    ///    이어폰을 쓰면 에코 자체가 없으므로, 이 걸림돌이 없으면 멀쩡한 말만 잃는다.
+    private static let leastCharsToDrop = 8
 
     /// 마이크 구간 중 **시스템 쪽에도 같은 말이 같은 때 있는 것**을 뺀다.
     static func removeEcho(mic: [Whisper.Segment], system: [Whisper.Segment]) -> [Whisper.Segment] {
@@ -25,6 +30,7 @@ enum EchoFilter {
             guard !nearby.isEmpty else { return true }
             let mine = normalize(segment.text)
             guard !mine.isEmpty else { return false }
+            guard mine.count >= leastCharsToDrop else { return true }
             return !nearby.contains { similarity(mine, normalize($0.text)) >= sameEnough }
         }
     }
@@ -51,8 +57,13 @@ enum EchoFilter {
     /// 낱말로 자르면 받아쓰기가 붙여 쓴 것과 띄어 쓴 것이 아예 다른 말이 된다.
     private static func similarity(_ a: String, _ b: String) -> Double {
         guard a.count > 1, b.count > 1 else { return a == b ? 1 : 0 }
-        // 한쪽이 다른 쪽을 통째로 품으면 같은 말로 본다. 에코는 앞뒤가 잘려 들어오는 일이 잦다.
-        if a.contains(b) || b.contains(a) { return 1 }
+        // 한쪽이 다른 쪽을 품으면 같은 말로 본다. 에코는 앞뒤가 잘려 들어오는 일이 잦다.
+        // ⚠️ 다만 짧은 조각이 긴 문장 안에 우연히 들어 있는 것까지 같다고 보면 안 된다.
+        //    길이가 비슷할 때만 인정한다 — 상대의 긴 말 속에 내 짧은 말이 들어 있다고 해서
+        //    내 말이 에코인 것은 아니다.
+        if a.contains(b) || b.contains(a) {
+            return Double(min(a.count, b.count)) / Double(max(a.count, b.count)) >= 0.7 ? 1 : 0
+        }
         let pairsA = Set(bigrams(a)), pairsB = Set(bigrams(b))
         guard !pairsA.isEmpty, !pairsB.isEmpty else { return 0 }
         let shared = pairsA.intersection(pairsB).count
