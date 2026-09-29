@@ -810,7 +810,7 @@ struct MeetingTabView: View {
                 row(icon: "video", title: "화상 회의 녹음", detail: nil,
                     fill: .meetingRow2, dot: true, dashed: false,
                     action: model.actions.startMeetingVideoCall)
-                row(icon: "doc", title: "녹음 파일로 만들기…", detail: "파일을 여기에 끌어다 놓아도 됩니다",
+                row(icon: "doc", title: "녹음 파일로 만들기", detail: "파일을 여기에 끌어다 놓아도 됩니다",
                     fill: .meetingRow3, dot: false, dashed: true,
                     action: model.actions.makeMeetingNotes)
                     .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
@@ -901,9 +901,11 @@ struct MeetingTabView: View {
             .background(fill)
             .overlay {
                 if dashed {
-                    RoundedRectangle(cornerRadius: 10)
+                    // 점선을 칸 가장자리에 딱 붙이면 테두리인지 칸인지 구분이 안 된다. 2pt 안으로 들인다.
+                    RoundedRectangle(cornerRadius: 8)
                         .strokeBorder(Color.onMeetingRowSub.opacity(dropTargeted ? 1 : 0.55),
                                       style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                        .padding(2)
                 }
             }
             .cornerRadius(10)
