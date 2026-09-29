@@ -22,6 +22,8 @@ struct PopoverRoot: View {
                     RecordingView(model: model)
                 case .polishing:
                     PolishingView(model: model)
+                case .meeting(let run):
+                    MeetingProgressView(model: model, run: run)
                 case .done(let record, let delivery):
                     DoneView(model: model, record: record, delivery: delivery)
                 case .error(let message):
@@ -585,5 +587,102 @@ struct OutlineButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// 회의록이 도는 동안의 팝오버. 시안 2-1 의 (나)에 해당한다.
+///
+/// 메뉴바 고리만으로는 단계 이름·남은 시간·취소를 담을 수 없다. 그래서 시작할 때 이 화면을
+/// 한 번 띄워 주고, 닫으면 메뉴바 고리가 이어받는다.
+struct MeetingProgressView: View {
+    @ObservedObject var model: AppModel
+    let run: AppModel.MeetingRun
+    /// 지남/남음 표시를 1초마다 다시 그린다. 숫자가 멈춰 있으면 그것대로 멈춘 줄 안다.
+    @State private var tick = Date()
+    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    private struct Step {
+        let title: String
+        let detail: String
+    }
+
+    private let steps = [
+        Step(title: "받아쓰기", detail: "이 맥 안에서 처리합니다 · 인터넷에 보내지 않습니다"),
+        Step(title: "요약하기", detail: "받아 적은 글만 AI 모델로 보냅니다"),
+        Step(title: "저장하고 복사하기", detail: "녹음 파일 옆에 .md 로 저장합니다"),
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("회의록 만드는 중").font(.system(size: 15, weight: .bold)).foregroundColor(.ink)
+                Text(subtitle).font(.system(size: 11)).foregroundColor(.text3)
+                    .lineLimit(1).truncationMode(.middle)
+            }
+            .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 12)
+
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                    HStack(alignment: .top, spacing: 9) {
+                        mark(for: index)
+                            .frame(width: 15, height: 15)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(step.title)
+                                .font(.system(size: 12.5, weight: index == run.stepIndex ? .semibold : .regular))
+                                .foregroundColor(index <= run.stepIndex ? .ink : .text3)
+                            Text(step.detail).font(.system(size: 10.5)).foregroundColor(.text3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+            .padding(.horizontal, 16).padding(.bottom, 12)
+
+            HStack(spacing: 6) {
+                if let remaining = run.remainingText {
+                    Text(remaining).font(.system(size: 11, weight: .semibold)).foregroundColor(.ink)
+                    Text("·").font(.system(size: 11)).foregroundColor(.text4)
+                }
+                Text(run.elapsedText).font(.system(size: 11)).foregroundColor(.text3)
+                Spacer()
+                Button("취소") { model.actions.cancelMeetingNotes() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11.5, weight: .semibold)).foregroundColor(.coral)
+            }
+            .padding(.horizontal, 16).padding(.bottom, 10)
+            .id(tick)   // 1초마다 숫자를 다시 그린다
+
+            HairLine()
+
+            Text("이 창을 닫아도 계속됩니다 · 메뉴바에서 진행률이 보입니다")
+                .font(.system(size: 10.5)).foregroundColor(.text3)
+                .padding(.horizontal, 16).padding(.vertical, 9)
+        }
+        .onReceive(timer) { tick = $0 }
+    }
+
+    private var subtitle: String {
+        guard let seconds = run.audioSeconds else { return run.fileName }
+        let m = Int(seconds) / 60, s = Int(seconds) % 60
+        return "\(run.fileName) · \(m)분 \(s)초"
+    }
+
+    /// 끝난 단계는 체크, 지금 단계는 코랄 점, 아직인 단계는 빈 동그라미.
+    @ViewBuilder
+    private func mark(for index: Int) -> some View {
+        if index < run.stepIndex {
+            Image(systemName: "checkmark.circle.fill").font(.system(size: 13)).foregroundColor(.coral)
+        } else if index == run.stepIndex {
+            ZStack {
+                Circle().stroke(Color.coral.opacity(0.3), lineWidth: 2)
+                Circle().trim(from: 0, to: CGFloat(run.fraction ?? 0.25))
+                    .stroke(Color.coral, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+            }
+            .frame(width: 13, height: 13)
+        } else {
+            Circle().stroke(Color.radioOff.opacity(0.45), lineWidth: 1.5).frame(width: 13, height: 13)
+        }
     }
 }

@@ -1061,6 +1061,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func wireModelActions() {
         model.actions.startRecording = { [weak self] in self?.startRecording() }
+        model.actions.cancelMeetingNotes = { [weak self] in self?.cancelMeetingNotes() }
         model.actions.makeMeetingNotes = { [weak self] in
             self?.popover.performClose(nil)
             self?.summarizeRecording()
@@ -1651,12 +1652,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         isMakingMeetingNotes = true
         let cancel = CancelToken()
         meetingCancel = cancel
+        // 파일 길이는 화면에만 쓴다. 못 읽어도 회의록은 만든다.
+        let seconds = CMTimeGetSeconds(AVURLAsset(url: url).duration)
+        var run = AppModel.MeetingRun(fileName: url.lastPathComponent,
+                                      audioSeconds: seconds.isFinite && seconds > 0 ? seconds : nil,
+                                      startedAt: Date())
+        model.phase = .meeting(run)
+        // 시안 2-1 의 (나). 시작할 때 한 번 열어 주고, 닫으면 메뉴바 고리가 이어받는다.
+        showPopover()
         setState(state, message: "회의록 만드는 중…")
         MeetingNotes.make(audio: url, cancel: cancel, onProgress: { [weak self] progress in
             guard let self else { return }
             DispatchQueue.main.async {
                 self.meetingRing = (progress.fraction, .working)
                 self.meetingProgressLine = progress.text
+                run.stage = progress.stage
+                run.fraction = progress.fraction
+                if case .meeting = self.model.phase { self.model.phase = .meeting(run) }
                 self.setState(self.state, message: "회의록: \(progress.text)")
             }
         }, completion: { [weak self] result in
@@ -1665,6 +1677,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 self.isMakingMeetingNotes = false
                 self.meetingCancel = nil
                 self.meetingProgressLine = nil
+                // 회의록 화면을 띄워 놨으면 내린다. 그 사이 사용자가 녹음을 시작했으면 건드리지 않는다.
+                if case .meeting = self.model.phase { self.model.phase = .idle }
                 switch result {
                 case .success(let notes): self.finishMeetingNotes(notes, source: url)
                 case .failure(let error):

@@ -10,10 +10,43 @@ final class AppModel: ObservableObject {
         case viewing    // 기록에서 열어 본 것 — 토스트 없음
     }
 
+    /// 회의록이 도는 동안 팝오버가 보여 줄 것. 메뉴바 고리와 같은 값을 쓴다.
+    struct MeetingRun {
+        let fileName: String
+        /// 녹음 길이. 모르면 nil — 파일을 읽기 전에도 화면은 떠야 한다.
+        let audioSeconds: Double?
+        let startedAt: Date
+        var stage: MeetingNotes.Progress.Stage = .transcribing
+        var fraction: Double?
+
+        /// 세 단계 중 몇 번째인지. 저장은 끝나는 순간이라 화면에 남지 않는다.
+        var stepIndex: Int { stage == .transcribing ? 0 : 1 }
+
+        var elapsed: TimeInterval { Date().timeIntervalSince(startedAt) }
+
+        /// 남은 시간 어림. 받아쓰기는 진행률로 재고, 요약은 몇 초라 따로 세지 않는다.
+        /// ⚠️ 처음 몇 초는 진행률이 0 에 가까워 터무니없는 값이 나온다. 그때는 안 보여 준다.
+        var remainingText: String? {
+            guard stage == .transcribing, let fraction, fraction > 0.05 else { return nil }
+            let total = elapsed / fraction
+            let left = max(total - elapsed, 0)
+            guard left > 3 else { return nil }
+            let minutes = Int(left) / 60, seconds = Int(left) % 60
+            return minutes > 0 ? "약 \(minutes)분 \(seconds)초 남음" : "약 \(seconds)초 남음"
+        }
+
+        var elapsedText: String {
+            let t = Int(elapsed)
+            return String(format: "%d:%02d 지남", t / 60, t % 60)
+        }
+    }
+
     enum Phase {
         case idle
         case recording
         case polishing
+        /// 녹음 파일로 회의록을 만드는 중. 받아쓰기와 달리 1~2분이 걸려서 단계를 보여 줘야 한다.
+        case meeting(MeetingRun)
         case done(SummaryRecord, Delivery)
         case error(String)
     }
@@ -61,6 +94,7 @@ final class AppModel: ObservableObject {
         /// 녹음 파일을 골라 회의록을 만든다. 오른쪽 클릭 메뉴에도 같은 항목이 있지만,
         /// 사람들이 실제로 보는 것은 이 팝오버라 여기가 진짜 입구다.
         var makeMeetingNotes: () -> Void = {}
+        var cancelMeetingNotes: () -> Void = {}
         var openSettings: () -> Void = {}
         var quit: () -> Void = {}
         var copy: (SummaryRecord) -> Void = { _ in }

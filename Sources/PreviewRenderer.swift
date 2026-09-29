@@ -74,6 +74,17 @@ enum PreviewRenderer {
         model.polishNote = "gemini-3.1-flash-lite 응답이 늦어 gemini-3.6-flash 에도 요청 중…"
         snap("polishing")
 
+        // 회의록 처리 중. 받아쓰기(1단계)와 요약(2단계)을 각각 본다 — 단계마다 표시가 달라진다.
+        model.phase = .meeting(AppModel.MeetingRun(
+            fileName: "주간 기획 회의.m4a", audioSeconds: 2112,
+            startedAt: Date().addingTimeInterval(-34), stage: .transcribing, fraction: 0.42))
+        snap("1d-meeting-transcribing")
+
+        model.phase = .meeting(AppModel.MeetingRun(
+            fileName: "주간 기획 회의.m4a", audioSeconds: 2112,
+            startedAt: Date().addingTimeInterval(-96), stage: .summarizing, fraction: nil))
+        snap("1d-meeting-summarizing")
+
         model.retryRecord = samples[0]
         model.phase = .error("정리에 실패해서 원문을 그대로 복사했어요\n\n"
             + APIErrorText.describe(service: "Gemini", code: 503,
