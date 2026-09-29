@@ -693,18 +693,24 @@ struct PolishStyleRow: View {
                     ForEach(PolishStyle.allCases, id: \.self) { style in
                         let on = model.style == style
                         Button(action: { model.style = style }) {
-                            HStack(spacing: 8) {
+                            HStack(alignment: .top, spacing: 8) {
                                 Image(systemName: on ? "largecircle.fill.circle" : "circle")
-                                    .font(.system(size: 13)).foregroundColor(on ? .coral : .text4)
-                                Text(style.title)
-                                    .font(.system(size: 12, weight: on ? .semibold : .regular))
-                                    .foregroundColor(.ink)
+                                    .font(.system(size: 13)).foregroundColor(on ? .coral : .radioOff)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(style.title)
+                                        .font(.system(size: 12, weight: on ? .semibold : .regular))
+                                        .foregroundColor(.ink)
+                                    // 제목만 있으면 "격식체"가 무엇인지 알 수 없다.
+                                    Text(style.detail)
+                                        .font(.system(size: 11)).foregroundColor(.text3)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
                                 Spacer(minLength: 0)
                             }
-                            .padding(.horizontal, 10).frame(height: 34)
+                            .padding(.horizontal, 10).padding(.vertical, 9)
                             .background(on ? Color.fill : Color.clear)
                             .overlay(RoundedRectangle(cornerRadius: 8)
-                                .stroke(on ? Color.lineStrong : Color.line, lineWidth: 1))
+                                .stroke(on ? Color.coral.opacity(0.5) : Color.radioOff.opacity(0.45), lineWidth: 1))
                             .cornerRadius(8)
                             .contentShape(Rectangle())
                         }
@@ -746,6 +752,7 @@ struct InkToggle: View {
                 Circle().fill(isOn ? Color.onPrimary : Color.white).frame(width: 18, height: 18).padding(2)
                     .shadow(color: .black.opacity(0.15), radius: 1, y: 0.5)
             }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -883,7 +890,7 @@ struct HotKeyRecorderField: View {
         }
         .buttonStyle(.plain)
         .fixedSize()
-        .help(recording ? "Esc 로 취소 · 수정자 키만 눌렀다 떼도 저장됩니다" : "클릭해서 바꾸기")
+        .help(recording ? "Esc 로 취소 · 수정자 키만 눌렀다 떼도 저장됩니다." : "클릭해서 바꾸기")
         .onDisappear { stop() }
     }
 
@@ -997,6 +1004,7 @@ struct UsageContextSection: View {
                         Text("직접 추가 — 내 소개, 자주 쓰는 용어")
                     }
                     .font(.system(size: 12)).foregroundColor(.text2)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
 

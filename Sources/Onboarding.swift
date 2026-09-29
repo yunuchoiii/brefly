@@ -31,6 +31,8 @@ final class OnboardingModel: ObservableObject {
     // 8 마무리 — 로그인 시 자동 실행
     /// 마법사에서 체크해 둔 값. 화면에서 바로 등록하지 않고 finish() 에서 한 번만 반영한다.
     /// 메뉴바 앱은 떠 있지 않으면 단축키에 반응하지 못하므로 기본값은 켬이다.
+    /// 정리 방식. 기본은 문장으로 다듬기라 그냥 넘어가도 된다.
+    @Published var summaryOn = Prefs.style == .summary
     @Published var launchAtLogin = true
     @Published var launchAtLoginError = ""
 
@@ -158,6 +160,7 @@ final class OnboardingModel: ObservableObject {
     func finish() {
         if !previewMode {
             // 이미 켜져 있으면 건드리지 않는다. 껐다 켜면 시스템 설정의 승인 상태가 흔들린다.
+            Prefs.style = summaryOn ? .summary : Prefs.plainStyle
             if launchAtLogin != LoginItem.isEnabled {
                 launchAtLoginError = LoginItem.set(launchAtLogin) ?? ""
                 if !launchAtLoginError.isEmpty {
@@ -657,11 +660,11 @@ private struct MicStep: View {
                     WizardButton("시스템 설정 열기", style: .primary) { SystemSettings.open(.microphone) }
                     WizardButton("다시 확인", style: .outline) { model.refreshMic() }
                 }
-                Text("한 번 거부하면 시스템 창이 다시 뜨지 않아 설정에서 직접 켜야 합니다")
+                Text("한 번 거부하면 시스템 창이 다시 뜨지 않아 설정에서 직접 켜야 합니다.")
                     .font(.system(size: 11.5)).foregroundColor(.text4)
             default:
                 PermissionBadge(state: .idle, icon: "mic")
-                Text("마이크를 허용해 주세요").font(.system(size: 21, weight: .heavy)).foregroundColor(.ink)
+                Text("마이크를 허용해 주세요.").font(.system(size: 21, weight: .heavy)).foregroundColor(.ink)
                 if model.mic == .requesting {
                     (Text("지금 뜬 시스템 창에서 ") + Text("허용").fontWeight(.bold).foregroundColor(.ink) + Text("을 눌러 주세요."))
                         .font(.system(size: 13.5)).foregroundColor(.text2)
@@ -696,7 +699,7 @@ private struct SpeechStep: View {
                         Image(systemName: "waveform.slash").font(.system(size: 20)).foregroundColor(.coralDeep).frame(width: 26)
                         VStack(alignment: .leading, spacing: 2) {
                             Text("음성 인식이 꺼져 있습니다").font(.system(size: 13.5, weight: .bold)).foregroundColor(.ink)
-                            Text("시스템 설정 > 개인정보 보호 및 보안 > 음성 인식에서 Brefly 를 켜 주세요")
+                            Text("시스템 설정 > 개인정보 보호 및 보안 > 음성 인식에서 Brefly 를 켜 주세요.")
                                 .font(.system(size: 12)).foregroundColor(.text2)
                         }
                         Spacer()
@@ -710,7 +713,7 @@ private struct SpeechStep: View {
                         LogoMark(size: 26, dot: .ink)
                         VStack(alignment: .leading, spacing: 2) {
                             Text("음성 인식 허용").font(.system(size: 13.5, weight: .bold)).foregroundColor(.ink)
-                            Text(model.speech == .requesting ? "지금 뜬 시스템 창에서 허용을 눌러 주세요" : "말한 내용을 글자로 바꾸는 데 필요합니다")
+                            Text(model.speech == .requesting ? "지금 뜬 시스템 창에서 허용을 눌러 주세요." : "말한 내용을 글자로 바꾸는 데 필요합니다.")
                                 .font(.system(size: 12)).foregroundColor(.text2)
                         }
                         Spacer()
@@ -851,19 +854,24 @@ private struct ModelStep: View {
                             Text("발급 페이지 열기").font(.system(size: 12, weight: .semibold)).foregroundColor(.ink).underline()
                         }.buttonStyle(.plain)
                         Spacer()
-                        Text("나중에 하면 원문만 복사됩니다").font(.system(size: 12)).foregroundColor(.text4)
+                        Text("나중에 하면 원문만 복사됩니다.").font(.system(size: 12)).foregroundColor(.text4)
                     }
                 }
             } else {
-                StepTitle("정리에 쓸 Gemini 무료 키를 넣어 주세요")
+                StepTitle("정리에 쓸 Gemini 무료 키를 넣어 주세요.")
                 keyField
                 if model.keyVerified {
                     GreenBox("\(Prefs.geminiModel) 로 연결됐습니다 · 요약을 정리할 준비가 됐어요")
                 } else {
                     helpBox
-                    Text("나중에 하면 정리 없이 원문만 복사됩니다").font(.system(size: 12)).foregroundColor(.text4)
+                    Text("나중에 하면 정리 없이 원문만 복사됩니다.").font(.system(size: 12)).foregroundColor(.text4)
                 }
             }
+                // 정리 방식은 쓸 AI 가 정해졌을 때만 묻는다. 아직 못 고른 화면은 이미 빽빽해서
+                // 여기서 더 올리면 560×440 안에 안 들어간다.
+                if model.appleAvailable || model.keyVerified {
+                    PolishChoice(model: model)
+                }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(.vertical, 18).padding(.horizontal, 36)
@@ -888,7 +896,7 @@ private struct ModelStep: View {
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
-                    TextField("AIza… 키를 붙여 넣어 주세요", text: $model.keyDraft)
+                    TextField("AIza… 키를 붙여 넣어 주세요.", text: $model.keyDraft)
                         .textFieldStyle(.plain)
                         .font(.system(size: 13))
                         .padding(.vertical, 10).padding(.horizontal, 14)
@@ -913,9 +921,9 @@ private struct ModelStep: View {
     private var helpBox: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("키 받는 방법 — 카드 등록 없이 무료입니다").font(.system(size: 12, weight: .bold)).foregroundColor(.text2)
-            NumberedRow(1) { Text("aistudio.google.com/apikey 에 접속합니다") }
-            NumberedRow(2) { Text("\"키 만들기\"를 누릅니다") }
-            NumberedRow(3) { Text("만들어진 키를 복사해 위 칸에 붙여 넣습니다") }
+            NumberedRow(1) { Text("aistudio.google.com/apikey 에 접속합니다.") }
+            NumberedRow(2) { Text("\"키 만들기\"를 누릅니다.") }
+            NumberedRow(3) { Text("만들어진 키를 복사해 위 칸에 붙여 넣습니다.") }
             WizardButton("발급 페이지 열기", style: .primary, small: true) {
                 if let u = URL(string: "https://aistudio.google.com/apikey") { NSWorkspace.shared.open(u) }
             }
@@ -1000,7 +1008,7 @@ private struct HotKeyStep: View {
             .cornerRadius(10)
         } else {
             Button(action: { model.startRecording() }) {
-                Text("눌러서 원하는 키 조합을 입력합니다")
+                Text("눌러서 원하는 키 조합을 입력합니다.")
                     .font(.system(size: 13)).foregroundColor(.text4)
                     .padding(.vertical, 13).padding(.horizontal, 16)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1033,16 +1041,16 @@ private struct PasteStep: View {
                   subtitle: "⌘V 로 원하는 곳에 붙여 넣습니다 · 별도 허용 필요 없음", compact: waiting) { model.setAutoPaste(false) }
             radio(selected: model.autoPaste, title: "커서 위치에 자동으로 붙여넣기",
                   subtitle: model.autoPaste && waiting ? "손쉬운 사용 허용이 필요합니다"
-                          : "말이 끝나면 지금 쓰던 곳에 바로 들어갑니다" + (model.accessibilityTrusted ? "" : " · 손쉬운 사용 허용 필요"),
+                          : "말이 끝나면 지금 쓰던 곳에 바로 들어갑니다." + (model.accessibilityTrusted ? "" : " · 손쉬운 사용 허용 필요"),
                   compact: waiting) { model.setAutoPaste(true) }
 
             if waiting {
                 VStack(alignment: .leading, spacing: 9) {
                     NumberedRow(1) { WizardButton("시스템 설정 열기", style: .primary, small: true) { model.openAccessibilitySettings() } }
-                    NumberedRow(2) { Text("목록에서 Brefly 스위치를 켭니다") }
+                    NumberedRow(2) { Text("목록에서 Brefly 스위치를 켭니다.") }
                     NumberedRow(3) {
                         HStack(spacing: 8) {
-                            Text("돌아오면 자동으로 확인됩니다")
+                            Text("돌아오면 자동으로 확인됩니다.")
                             Spinner(size: 11)
                             Text("2초마다 확인 중").font(.system(size: 11.5)).foregroundColor(.text4)
                         }
@@ -1148,6 +1156,23 @@ private struct DoneStep: View {
                 }
             }
             Text("지금 눌러서 한 번 말해 보세요.").font(.system(size: 13.5)).foregroundColor(.text2)
+            // 회의록은 설정할 것이 없어서 단계로 만들 이유가 없다. 끝 화면은 이탈 걱정이 없는 자리다(시안).
+            VStack(alignment: .leading, spacing: 5) {
+                Text("녹음 파일로 회의록도 만듭니다")
+                    .font(.system(size: 13, weight: .bold)).foregroundColor(.ink)
+                Text("메뉴바 아이콘을 누르고 아래쪽 ‘회의록 만들기…’")
+                    .font(.system(size: 11.5)).foregroundColor(.text2)
+                // 회의 내용이라 "어디로 가는지"가 제일 큰 걱정이다. 숨기지 않고 둘 다 적는다.
+                Text("녹음은 이 맥 밖으로 나가지 않습니다 · 요약할 때만 받아 적은 글을 AI 모델로 보냅니다.")
+                    .font(.system(size: 11)).foregroundColor(.text3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(Color.paperSoft)
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.line, lineWidth: 1))
+            .cornerRadius(10)
+
             Button(action: { model.launchAtLogin.toggle() }) {
                 HStack(spacing: 9) {
                     RoundedRectangle(cornerRadius: 5)
@@ -1398,5 +1423,44 @@ struct FlowLayout: Layout {
             x += sz.width + spacing
             rowH = max(rowH, sz.height)
         }
+    }
+}
+
+/// 정리 방식 고르기. 설명 없이 선택지 둘로 알려 준다 — 기본값이 있어 그냥 넘어가도 된다(시안 W3).
+private struct PolishChoice: View {
+    @ObservedObject var model: OnboardingModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("정리 방식").font(.system(size: 12, weight: .bold)).foregroundColor(.text2)
+            HStack(spacing: 8) {
+                option(title: "문장으로 다듬기", detail: "말한 그대로 읽기 좋게 고칩니다.", on: !model.summaryOn) {
+                    model.summaryOn = false
+                }
+                option(title: "핵심 요약", detail: "요점만 뽑아 목록 형태로 만듭니다.", on: model.summaryOn) {
+                    model.summaryOn = true
+                }
+            }
+            Text("메뉴바 팝오버의 “핵심 요약” 스위치로 언제든 바꿀 수 있습니다.")
+                .font(.system(size: 11)).foregroundColor(.text3)
+        }
+    }
+
+    private func option(title: String, detail: String, on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 12.5, weight: .bold)).foregroundColor(.ink)
+                Text(detail).font(.system(size: 11)).foregroundColor(.text2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(on ? Color.fill : Color.clear)
+            .overlay(RoundedRectangle(cornerRadius: 9)
+                .stroke(on ? Color.coral : Color.lineStrong, lineWidth: on ? 1.5 : 1))
+            .cornerRadius(9)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
