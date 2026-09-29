@@ -805,13 +805,14 @@ struct MeetingTabView: View {
         VStack(spacing: 0) {
             VStack(spacing: 8) {
                 row(icon: "person.2", title: "대면 회의 녹음", detail: nil,
-                    fill: .meetingRow1, dot: true, dashed: false,
+                    fill: .meetingRow1, onFill: true, dot: true, dashed: false,
                     action: model.actions.startMeetingInPerson)
                 row(icon: "video", title: "화상 회의 녹음", detail: nil,
-                    fill: .meetingRow2, dot: true, dashed: false,
+                    fill: .meetingRow2, onFill: true, dot: true, dashed: false,
                     action: model.actions.startMeetingVideoCall)
+                // 파일은 창을 여는 동작이라 채우지 않는다. 흰 칸에 점선만 둘러 실시간 둘과 갈라 놓는다.
                 row(icon: "doc", title: "녹음 파일로 만들기", detail: "파일을 여기에 끌어다 놓아도 됩니다",
-                    fill: .meetingRow3, dot: false, dashed: true,
+                    fill: .paper, onFill: false, dot: false, dashed: true,
                     action: model.actions.makeMeetingNotes)
                     .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
                         guard let provider = providers.first else { return false }
@@ -880,16 +881,20 @@ struct MeetingTabView: View {
 
     /// - Parameter detail: 없으면 한 줄로 그린다. 시안에서 대면·화상은 설명이 없다 —
     ///   무엇인지 제목만으로 알 수 있고, 설명을 붙이면 세 줄이 다 빽빽해진다.
-    private func row(icon: String, title: String, detail: String?, fill: Color,
+    /// - Parameter onFill: 어두운 칸 위에 얹는지. 흰 칸이면 글자와 아이콘을 본래 색으로 쓴다.
+    private func row(icon: String, title: String, detail: String?, fill: Color, onFill: Bool,
                      dot: Bool, dashed: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        let titleColor: Color = onFill ? .onMeetingRow : .ink
+        let detailColor: Color = onFill ? .onMeetingRowSub : .text3
+        let borderColor: Color = onFill ? .onMeetingRowSub : .radioOff
+        return Button(action: action) {
             HStack(spacing: 11) {
-                Image(systemName: icon).font(.system(size: 14)).foregroundColor(.onMeetingRow)
+                Image(systemName: icon).font(.system(size: 14)).foregroundColor(titleColor)
                     .frame(width: 18)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(title).font(.system(size: 13, weight: .bold)).foregroundColor(.onMeetingRow)
+                    Text(title).font(.system(size: 13, weight: .bold)).foregroundColor(titleColor)
                     if let detail {
-                        Text(detail).font(.system(size: 11)).foregroundColor(.onMeetingRowSub)
+                        Text(detail).font(.system(size: 11)).foregroundColor(detailColor)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -903,7 +908,7 @@ struct MeetingTabView: View {
                 if dashed {
                     // 점선을 칸 가장자리에 딱 붙이면 테두리인지 칸인지 구분이 안 된다. 2pt 안으로 들인다.
                     RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(Color.onMeetingRowSub.opacity(dropTargeted ? 1 : 0.55),
+                        .strokeBorder(borderColor.opacity(dropTargeted ? 1 : 0.7),
                                       style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
                         .padding(2)
                 }

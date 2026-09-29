@@ -418,6 +418,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var meetingRecorder: MeetingRecorder?
     /// 지금 만드는 회의록이 어떤 방식인지. 목록에 "대면/화상/녹음 파일"로 적는다.
     private var meetingKind = MeetingRecord.Kind.file
+    /// 파일 고르기처럼 다른 창을 띄우는 동안 팝오버를 붙잡아 둘지.
+    private var keepPopoverOpen = false
     private var partialText = ""
 
     // 팝오버(시안 1a/1b/1c)
@@ -1069,11 +1071,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// 녹음 중·정리 중에는 팝오버를 붙박이로 둔다. 다른 데를 눌러도, 데스크탑을 옮겨도, 전체 화면 앱 위에서도 남는다.
     /// 그 밖의 상태(대기·완료·오류)는 평소 팝오버처럼 밖을 누르면 닫힌다.
     private func applyPopoverStickiness(for phase: AppModel.Phase) {
-        let sticky: Bool
+        var sticky: Bool
         switch phase {
         case .recording, .polishing: sticky = true
         default: sticky = false
         }
+        // 파일 고르기 창을 띄우는 동안에는 단계와 상관없이 붙잡아 둔다. 안 그러면 팝오버가
+        // 초점을 잃고 스스로 닫혀서, 파일을 고르고 돌아와도 아무것도 안 남는다.
+        if keepPopoverOpen { sticky = true }
         popover.behavior = sticky ? .applicationDefined : .transient
         if let window = popover.contentViewController?.view.window {
             window.collectionBehavior = sticky ? [.canJoinAllSpaces, .fullScreenAuxiliary] : []
@@ -1148,15 +1153,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             self?.openMeetingRecord(record)
         }
         model.actions.makeMeetingNotesFrom = { [weak self] url in
-            self?.popover.performClose(nil)
             self?.ensureModelThenMakeNotes(for: url)
         }
         model.actions.startMeetingVideoCall = { [weak self] in self?.startMeetingVideoCall() }
         model.actions.stopMeetingRecording = { [weak self] in self?.stopMeetingRecording() }
-        model.actions.makeMeetingNotes = { [weak self] in
-            self?.popover.performClose(nil)
-            self?.summarizeRecording()
-        }
+        model.actions.makeMeetingNotes = { [weak self] in self?.summarizeRecording() }
         model.actions.finishRecording = { [weak self] in
             guard let self, self.recorder.isRunning else { return }
             self.stopAndPolish()
@@ -1846,6 +1847,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         panel.prompt = "회의록 만들기"
         // 메뉴바 앱이라 먼저 앞으로 나오지 않으면 창이 뒤에 숨는다.
         NSApp.activate(ignoringOtherApps: true)
+        keepPopoverOpen = true
+        applyPopoverStickiness(for: model.phase)
+        defer {
+            keepPopoverOpen = false
+            applyPopoverStickiness(for: model.phase)
+        }
         guard panel.runModal() == .OK, let url = panel.url else { return }
         ensureModelThenMakeNotes(for: url)
     }
