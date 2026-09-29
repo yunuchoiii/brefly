@@ -78,6 +78,25 @@ if let i = CommandLine.arguments.firstIndex(of: "--prompt"), i + 1 < CommandLine
 if let i = CommandLine.arguments.firstIndex(of: "--render-menubar"), i + 1 < CommandLine.arguments.count {
     let dir = URL(fileURLWithPath: CommandLine.arguments[i + 1], isDirectory: true)
     try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    // 로더 애니메이션 프레임. 경로를 잘라 그리므로 중간이 끊기지 않는지 눈으로 봐야 한다.
+    for frame in stride(from: 0.0, to: 96.0, by: 12.0) {
+        for (label, dark) in [("밝은", false), ("어두운", true)] {
+            let icon = Logo.menuBarLoader(frame: frame, dark: dark)
+            let canvasSide: CGFloat = 72
+            let canvas = NSImage(size: NSSize(width: canvasSide, height: canvasSide))
+            canvas.lockFocus()
+            (dark ? NSColor(white: 0.13, alpha: 1) : NSColor(white: 0.96, alpha: 1)).setFill()
+            NSRect(x: 0, y: 0, width: canvasSide, height: canvasSide).fill()
+            icon.draw(in: NSRect(x: 0, y: 0, width: canvasSide, height: canvasSide),
+                      from: .zero, operation: .sourceOver, fraction: 1)
+            canvas.unlockFocus()
+            if let tiff = canvas.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+               let png = rep.representation(using: .png, properties: [:]) {
+                try? png.write(to: dir.appendingPathComponent(String(format: "loader-%02.0f-\(label).png", frame)))
+            }
+        }
+    }
+
     let states: [(name: String, progress: Double?, kind: AppDelegate.RingKind?)] = [
         ("1-평소",        nil,  nil),
         ("2-0퍼센트",     0,    .working),
@@ -1644,9 +1663,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
     /// 끝난 뒤 초록 점을 잠깐 보여 주고 원래대로 돌리는 타이머.
     private var doneRingTimer: Timer?
-    /// 고리를 돌리는 타이머. 가만히 있으면 18pt 에서 눈에 안 띈다.
+    /// 로고 로더를 돌리는 타이머. 팝오버의 BreflyLoader 와 같은 96프레임 루프를 메뉴바에 그린다.
     private var ringSpinTimer: Timer?
-    private var ringAngle: Double = 0
+    private var loaderFrame: Double = 0
 
     private func applyMenuBarIcon() {
         guard let button = statusItem?.button else { return }
@@ -1660,20 +1679,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let spinning: Bool
         if case .working = ring.kind { spinning = true } else { spinning = false }
         if spinning, ringSpinTimer == nil {
-            ringSpinTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 20, repeats: true) { [weak self] _ in
+            // 원본과 같은 30fps 96프레임. 더 느리게 돌리면 파형이 끊겨 보인다.
+            ringSpinTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
                 guard let self, self.meetingRing != nil else { return }
-                self.ringAngle = (self.ringAngle + 9).truncatingRemainder(dividingBy: 360)
+                self.loaderFrame = (self.loaderFrame + 1).truncatingRemainder(dividingBy: 96)
                 self.applyMenuBarIcon()
             }
         } else if !spinning {
             ringSpinTimer?.invalidate()
             ringSpinTimer = nil
-            ringAngle = 0
+            loaderFrame = 0
         }
         // 메뉴바는 배경화면에 따라 어두울 수 있다. 앱 모드가 아니라 버튼이 실제로 쓰는 모양새를 본다.
         let dark = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        button.image = Logo.menuBarIcon(progress: ring.fraction, color: ring.kind.color(dark: dark),
-                                        dark: dark, rotation: ringAngle)
+        switch ring.kind {
+        case .working:
+            // 돌아가는 고리는 "안 이쁘다"는 말을 들었다. 팝오버에서 쓰던 로고 애니메이션을 그대로 쓴다.
+            button.image = Logo.menuBarLoader(frame: loaderFrame, dark: dark)
+        case .done:
+            button.image = Logo.menuBarIcon(progress: 1, color: ring.kind.color(dark: dark), dark: dark)
+        }
     }
 
     /// 다 됐다는 표시를 5초만 보여 준다. 계속 두면 다음에 볼 때 무슨 뜻인지 모른다.

@@ -224,6 +224,102 @@ enum Logo {
         return image
     }
 
+
+    // MARK: - 메뉴바 로더
+
+    /// 파형 경로를 잘게 편 점들과 누적 길이. `NSBezierPath` 에는 SwiftUI 의 `trim` 이 없어서
+    /// 직접 잘라야 한다. viewBox(32) 좌표로 한 번만 계산해 두고 그릴 때 배율만 곱한다.
+    private static let flatWave: (points: [CGPoint], lengths: [CGFloat], total: CGFloat) = {
+        let flat = wave(scale: 1).flattened
+        var points: [CGPoint] = []
+        var element = [NSPoint](repeating: .zero, count: 3)
+        for i in 0..<flat.elementCount {
+            switch flat.element(at: i, associatedPoints: &element) {
+            case .moveTo, .lineTo: points.append(element[0])
+            default: break
+            }
+        }
+        var lengths: [CGFloat] = [0]
+        var total: CGFloat = 0
+        for i in 1..<max(points.count, 1) {
+            total += hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y)
+            lengths.append(total)
+        }
+        return (points, lengths, total)
+    }()
+
+    /// 전체 길이의 `from`~`to`(0~1) 구간만 남긴 경로.
+    private static func trimmedWave(from: Double, to: Double, scale s: CGFloat) -> NSBezierPath {
+        let path = NSBezierPath()
+        let (points, lengths, total) = flatWave
+        guard points.count > 1, total > 0, to > from else { return path }
+        let a = CGFloat(from) * total, b = CGFloat(to) * total
+        var started = false
+        for i in 1..<points.count {
+            let l0 = lengths[i - 1], l1 = lengths[i]
+            guard l1 > a, l0 < b else { continue }
+            // 구간이 잘리는 자리는 두 점 사이를 비례로 나눠 찾는다.
+            func at(_ length: CGFloat) -> CGPoint {
+                let t = l1 > l0 ? (length - l0) / (l1 - l0) : 0
+                return CGPoint(x: points[i - 1].x + (points[i].x - points[i - 1].x) * t,
+                               y: points[i - 1].y + (points[i].y - points[i - 1].y) * t)
+            }
+            let p0 = at(max(l0, a)), p1 = at(min(l1, b))
+            if !started { path.move(to: CGPoint(x: p0.x * s, y: p0.y * s)); started = true }
+            path.line(to: CGPoint(x: p1.x * s, y: p1.y * s))
+        }
+        return path
+    }
+
+    /// 메뉴바에 그리는 로고 로더. 팝오버의 `BreflyLoader` 와 같은 96프레임 루프다 —
+    /// 파형이 그려졌다 지워지고 점이 튀어나온다. 돌아가는 고리보다 이쪽이 브랜드에 맞는다.
+    ///
+    /// ⚠️ 진행률은 여기 없다. 이 애니메이션은 "돌아가고 있다"만 말한다.
+    ///    얼마나 왔는지는 아이콘 옆의 퍼센트 글자가 맡는다.
+    static func menuBarLoader(frame f: Double, dark: Bool) -> NSImage {
+        let size: CGFloat = 18
+        let image = NSImage(size: NSSize(width: size, height: size), flipped: true) { _ in
+            let s = size / viewBox
+            let trimEnd = ramp(f, 0, 35, 0, 1, easeInOut)
+            let trimStart = ramp(f, 55, 75, 0, 1, easeInOut)
+            let dotOpacity = f < 80 ? ramp(f, 37, 45, 0, 1, easeOut) : ramp(f, 80, 90, 1, 0, easeIn)
+            let dotScale: Double = {
+                if f < 49 { return ramp(f, 37, 49, 0, 1.3, easeOut) }
+                if f < 55 { return ramp(f, 49, 55, 1.3, 1, easeInOut) }
+                if f < 80 { return 1 }
+                return ramp(f, 80, 90, 1, 0, easeIn)
+            }()
+
+            let ink = dark ? NSColor.white : NSColor(hex: 0x16181d)
+            ink.setStroke()
+            let path = trimmedWave(from: trimStart, to: max(trimStart, trimEnd), scale: s)
+            path.lineWidth = strokeWidth * s
+            path.lineCapStyle = .round
+            path.lineJoinStyle = .round
+            path.stroke()
+
+            if dotOpacity > 0.01, dotScale > 0.01 {
+                Theme.coral.withAlphaComponent(dotOpacity).setFill()
+                let r = dotRadius * s * dotScale
+                let c = CGPoint(x: dotCenter.x * s, y: dotCenter.y * s)
+                NSBezierPath(ovalIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)).fill()
+            }
+            return true
+        }
+        image.isTemplate = false
+        return image
+    }
+
+    private static func ramp(_ f: Double, _ f0: Double, _ f1: Double, _ v0: Double, _ v1: Double,
+                             _ ease: (Double) -> Double) -> Double {
+        if f <= f0 { return v0 }
+        if f >= f1 { return v1 }
+        return v0 + (v1 - v0) * ease((f - f0) / (f1 - f0))
+    }
+    private static func easeInOut(_ t: Double) -> Double { t < 0.5 ? 2 * t * t : 1 - pow(-2 * t + 2, 2) / 2 }
+    private static func easeOut(_ t: Double) -> Double { 1 - pow(1 - t, 3) }
+    private static func easeIn(_ t: Double) -> Double { t * t * t }
+
     /// 앱 아이콘: 잉크 블랙 둥근 사각형 + 흰 파형 + 코랄 점.
     static func appIcon(size: CGFloat = 512) -> NSImage {
         NSImage(size: NSSize(width: size, height: size), flipped: true) { rect in
