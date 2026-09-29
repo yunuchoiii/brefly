@@ -14,6 +14,9 @@ enum MeetingNotes {
     struct Result {
         let transcript: String
         let notes: String
+        /// 시각이 붙은 낱말 묶음. 원문 탭이 "몇 분에 무슨 말을 했는지" 보여 주는 데 쓴다.
+        /// 나중에 화자 구분이 들어오면 이 시각에 화자 구간을 겹쳐 맞춘다.
+        let segments: [Whisper.Segment]
         let transcribeSeconds: Double
         let summarizeSeconds: Double
     }
@@ -138,6 +141,7 @@ enum MeetingNotes {
                 completion(result.map {
                     Result(transcript: transcript,
                            notes: $0,
+                           segments: segments,
                            transcribeSeconds: transcribeSeconds,
                            summarizeSeconds: Date().timeIntervalSince(summarizeStarted))
                 })

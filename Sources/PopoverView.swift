@@ -577,12 +577,18 @@ struct KeyCap: View {
 
 struct OutlineButton: View {
     let title: String
+    /// 팝오버 버튼은 가로를 꽉 채우지만, 창 머리의 버튼은 글자만큼만 차지해야 한다.
+    let wide: Bool
     let action: () -> Void
-    init(_ title: String, action: @escaping () -> Void) { self.title = title; self.action = action }
+    init(_ title: String, wide: Bool = true, action: @escaping () -> Void) {
+        self.title = title; self.wide = wide; self.action = action
+    }
     var body: some View {
         Button(action: action) {
             Text(title).font(.system(size: 12, weight: .semibold)).foregroundColor(.ink)
-                .frame(maxWidth: .infinity).frame(height: 32)
+                .frame(maxWidth: wide ? .infinity : nil)
+                .padding(.horizontal, wide ? 0 : 14)
+                .frame(height: 32)
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.lineStrong, lineWidth: 1))
                 .contentShape(Rectangle())
         }

@@ -100,6 +100,37 @@ enum PreviewRenderer {
         model.history = []
         snap("1a-idle-empty")
 
+        // 회의록 결과 창. 팝오버가 아니라 일반 창이라 크기를 못 박아 그린다.
+        let sampleNotes = """
+        ## 한 줄 요약
+        출시 일정을 그대로 두고, 설치 안내는 단계를 늘리지 않는 쪽으로 정리하기로 했다.
+
+        ## 결정된 것
+        - 다음 달 14일 출시 일정 유지
+        - 설치 안내에 새 단계를 추가하지 않음
+
+        ## 할 일
+        - 처리 중 화면 시안 확정
+        - 내려받기 안내 문구 검토
+
+        ## 논의한 것
+        - 처리 중에 창을 닫으면 멈춘 것처럼 보인다는 의견
+        """
+        let sampleSegments: [Whisper.Segment] = [
+            .init(text: "자, 그럼 시작하겠습니다. 오늘은 두 가지만 보면 될 것 같아요.", start: 0, end: 4.2),
+            .init(text: "출시는 그대로 가는 거죠? 회의록 기능까지 포함해서요.", start: 42, end: 46.5),
+            .init(text: "네, 그건 확정이고요. 문제는 처리 중 화면입니다.", start: 75, end: 79.1),
+            .init(text: "창을 닫으면 아무것도 안 보여서 멈춘 줄 아시더라고요.", start: 123, end: 127.4),
+        ]
+        let sampleDoc = MeetingDocument(
+            title: "주간 기획 회의", audio: URL(fileURLWithPath: "/Users/me/문서/회의/주간 기획 회의.m4a"),
+            notesFile: URL(fileURLWithPath: "/Users/me/문서/회의/주간 기획 회의 회의록.md"),
+            recordedAt: Date(), duration: 2112, notes: sampleNotes, segments: sampleSegments)
+        write(render(MeetingResultView(document: sampleDoc).frame(width: 820, height: 600)),
+              to: dir.appendingPathComponent("3-meeting-result.png"))
+        write(render(MeetingResultView(document: sampleDoc).frame(width: 820, height: 600), dark: true),
+              to: dir.appendingPathComponent("dark-3-meeting-result.png"))
+
         let settings = SettingsModel()
         settings.usageContexts = [.devFrontend, .devMobile]
         settings.showOnboarding = true

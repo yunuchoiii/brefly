@@ -1714,7 +1714,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         setState(state, message: "회의록을 만들었습니다 (\(seconds)초). 클립보드에도 복사했습니다.")
         Log.write("회의록 완성 — \(target.path), 받아쓰기 \(Int(notes.transcribeSeconds))초 + 요약 \(Int(notes.summarizeSeconds))초")
         flashDoneRing()
-        NSWorkspace.shared.activateFileViewerSelecting([target])
+        // Finder 로 파일만 보여 주고 끝내면 사용자가 .md 를 열 앱을 찾아야 한다.
+        // 앱 안에서 바로 읽고 고칠 수 있게 창을 띄운다.
+        let audioSeconds = CMTimeGetSeconds(AVURLAsset(url: source).duration)
+        MeetingWindow.shared.show(MeetingDocument(
+            title: stem,
+            audio: source,
+            notesFile: target,
+            recordedAt: (try? source.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date(),
+            duration: audioSeconds.isFinite && audioSeconds > 0 ? audioSeconds : nil,
+            notes: notes.notes,
+            segments: notes.segments))
     }
 
     @objc private func cancelMeetingNotes() {
