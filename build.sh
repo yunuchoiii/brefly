@@ -99,6 +99,14 @@ swiftc \
   -framework ServiceManagement \
   -Xlinker -weak_framework -Xlinker FoundationModels \
   -F "$DIR/vendor" -framework Sparkle \
+  -Xcc -I"$DIR/vendor/whisper/include" \
+  -import-objc-header "$DIR/vendor/whisper/bridge.h" \
+  -L"$DIR/vendor/whisper/lib" \
+  -lwhisper -lparakeet -lggml -lggml-base -lggml-cpu -lggml-metal -lggml-blas \
+  -lc++ \
+  -framework Metal \
+  -framework MetalKit \
+  -framework Accelerate \
   -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
   -o "$APP/Contents/MacOS/Brefly" \
   "$DIR/Sources/"*.swift
