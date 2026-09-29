@@ -72,6 +72,31 @@ if let i = CommandLine.arguments.firstIndex(of: "--prompt"), i + 1 < CommandLine
     exit(0)
 }
 
+// 진단용: 받아쓰기 모델을 내려받는다. 547MB 라 진행률을 보여 준다.
+if CommandLine.arguments.contains("--fetch-model") {
+    let done = DispatchSemaphore(value: 0)
+    let downloader = ModelDownloader()
+    var lastShown = -1
+    downloader.download(onProgress: { progress in
+        let percent = Int(progress.fraction * 100)
+        if percent != lastShown, percent % 5 == 0 {
+            lastShown = percent
+            print("  \(percent)%  \(progress.text)")
+        }
+    }, completion: { result in
+        switch result {
+        case .success(let url):
+            let size = ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int64) ?? 0
+            print("OK \(url.path) (\(size / 1_048_576)MB)")
+        case .failure(let error):
+            print("FAIL \(error.localizedDescription)")
+        }
+        done.signal()
+    })
+    _ = done.wait(timeout: .now() + 1800)
+    exit(0)
+}
+
 // 진단용: whisper.cpp 로 소리 파일을 받아쓴다. --model 로 모델 파일을 가리킨다.
 if let i = CommandLine.arguments.firstIndex(of: "--whisper"), i + 1 < CommandLine.arguments.count {
     let audio = URL(fileURLWithPath: CommandLine.arguments[i + 1])
