@@ -31,6 +31,8 @@ final class OnboardingModel: ObservableObject {
     // 8 마무리 — 로그인 시 자동 실행
     /// 마법사에서 체크해 둔 값. 화면에서 바로 등록하지 않고 finish() 에서 한 번만 반영한다.
     /// 메뉴바 앱은 떠 있지 않으면 단축키에 반응하지 못하므로 기본값은 켬이다.
+    /// 정리 방식. 기본은 문장으로 다듬기라 그냥 넘어가도 된다.
+    @Published var summaryOn = Prefs.style == .summary
     @Published var launchAtLogin = true
     @Published var launchAtLoginError = ""
 
@@ -158,6 +160,7 @@ final class OnboardingModel: ObservableObject {
     func finish() {
         if !previewMode {
             // 이미 켜져 있으면 건드리지 않는다. 껐다 켜면 시스템 설정의 승인 상태가 흔들린다.
+            Prefs.style = summaryOn ? .summary : Prefs.plainStyle
             if launchAtLogin != LoginItem.isEnabled {
                 launchAtLoginError = LoginItem.set(launchAtLogin) ?? ""
                 if !launchAtLoginError.isEmpty {
@@ -864,6 +867,11 @@ private struct ModelStep: View {
                     Text("나중에 하면 정리 없이 원문만 복사됩니다").font(.system(size: 12)).foregroundColor(.text4)
                 }
             }
+                // 정리 방식은 쓸 AI 가 정해졌을 때만 묻는다. 아직 못 고른 화면은 이미 빽빽해서
+                // 여기서 더 올리면 560×440 안에 안 들어간다.
+                if model.appleAvailable || model.keyVerified {
+                    PolishChoice(model: model)
+                }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(.vertical, 18).padding(.horizontal, 36)
@@ -1148,6 +1156,23 @@ private struct DoneStep: View {
                 }
             }
             Text("지금 눌러서 한 번 말해 보세요.").font(.system(size: 13.5)).foregroundColor(.text2)
+            // 회의록은 설정할 것이 없어서 단계로 만들 이유가 없다. 끝 화면은 이탈 걱정이 없는 자리다(시안).
+            VStack(alignment: .leading, spacing: 5) {
+                Text("녹음 파일로 회의록도 만듭니다")
+                    .font(.system(size: 13, weight: .bold)).foregroundColor(.ink)
+                Text("메뉴바 아이콘을 누르고 아래쪽 ‘회의록 만들기…’")
+                    .font(.system(size: 11.5)).foregroundColor(.text2)
+                // 회의 내용이라 "어디로 가는지"가 제일 큰 걱정이다. 숨기지 않고 둘 다 적는다.
+                Text("녹음은 이 맥 밖으로 나가지 않습니다 · 요약할 때만 받아 적은 글을 AI 모델로 보냅니다")
+                    .font(.system(size: 11)).foregroundColor(.text3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(Color.paperSoft)
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.line, lineWidth: 1))
+            .cornerRadius(10)
+
             Button(action: { model.launchAtLogin.toggle() }) {
                 HStack(spacing: 9) {
                     RoundedRectangle(cornerRadius: 5)
@@ -1398,5 +1423,44 @@ struct FlowLayout: Layout {
             x += sz.width + spacing
             rowH = max(rowH, sz.height)
         }
+    }
+}
+
+/// 정리 방식 고르기. 설명 없이 선택지 둘로 알려 준다 — 기본값이 있어 그냥 넘어가도 된다(시안 W3).
+private struct PolishChoice: View {
+    @ObservedObject var model: OnboardingModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("정리 방식").font(.system(size: 12, weight: .bold)).foregroundColor(.text2)
+            HStack(spacing: 8) {
+                option(title: "문장으로 다듬기", detail: "말한 그대로 읽기 좋게 고칩니다", on: !model.summaryOn) {
+                    model.summaryOn = false
+                }
+                option(title: "핵심 요약", detail: "요점만 뽑아 불릿 목록으로 만듭니다", on: model.summaryOn) {
+                    model.summaryOn = true
+                }
+            }
+            Text("메뉴바 팝오버의 “핵심 요약” 스위치로 언제든 바꿀 수 있습니다")
+                .font(.system(size: 11)).foregroundColor(.text3)
+        }
+    }
+
+    private func option(title: String, detail: String, on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 12.5, weight: .bold)).foregroundColor(.ink)
+                Text(detail).font(.system(size: 11)).foregroundColor(.text2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(on ? Color.fill : Color.clear)
+            .overlay(RoundedRectangle(cornerRadius: 9)
+                .stroke(on ? Color.coral : Color.lineStrong, lineWidth: on ? 1.5 : 1))
+            .cornerRadius(9)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
