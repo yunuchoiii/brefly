@@ -397,6 +397,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var meetingRun: AppModel.MeetingRun?
     /// 지금 돌아가는 회의 녹음. 팝오버를 닫아도 계속 돌아야 해서 여기 붙잡아 둔다.
     private var meetingRecorder: MeetingRecorder?
+    /// 지금 만드는 회의록이 어떤 방식인지. 목록에 "대면/화상/녹음 파일"로 적는다.
+    private var meetingKind = MeetingRecord.Kind.file
     private var partialText = ""
 
     // 팝오버(시안 1a/1b/1c)
@@ -1122,6 +1124,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         model.actions.startRecording = { [weak self] in self?.startRecording() }
         model.actions.cancelMeetingNotes = { [weak self] in self?.cancelMeetingNotes() }
         model.actions.startMeetingInPerson = { [weak self] in self?.startMeetingInPerson() }
+        model.actions.openMeeting = { [weak self] record in
+            self?.popover.performClose(nil)
+            self?.openMeetingRecord(record)
+        }
         model.actions.makeMeetingNotesFrom = { [weak self] url in
             self?.popover.performClose(nil)
             self?.ensureModelThenMakeNotes(for: url)
@@ -1681,13 +1687,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     // MARK: 회의를 지금 녹음하기
 
-    @objc private func startMeetingInPerson() { beginMeetingRecording(captureSystem: false) }
+    @objc private func startMeetingInPerson() {
+        meetingKind = .inPerson
+        beginMeetingRecording(captureSystem: false)
+    }
 
     @objc private func startMeetingVideoCall() {
         // ⚠️ 화면 기록 권한이 없으면 상대 목소리를 못 잡는다. 그냥 시작하면 회의가 끝난 뒤에야
         //    내 말만 남은 걸 알게 된다 — 되돌릴 수 없는 손해다. 먼저 묻는다.
         Task { @MainActor in
             if await SystemAudioRecorder.hasPermission() {
+                self.meetingKind = .videoCall
                 self.beginMeetingRecording(captureSystem: true)
                 return
             }
@@ -1710,6 +1720,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 }
                 self.setState(self.state, message: "권한을 켠 뒤 다시 눌러 주세요")
             case .alertSecondButtonReturn:
+                self.meetingKind = .videoCall
                 self.beginMeetingRecording(captureSystem: false)
             default:
                 break
@@ -1816,6 +1827,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     /// 모델이 없으면 먼저 받는다. 547MB 라 묻지 않고 받으면 안 된다.
     private func ensureModelThenMakeNotes(for url: URL) {
+        meetingKind = .file
         if ModelStore.hasTranscriptionModel {
             makeMeetingNotes(for: url)
             return
@@ -1925,6 +1937,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let seconds = Int(notes.transcribeSeconds + notes.summarizeSeconds)
         setState(state, message: "회의록을 만들었습니다 (\(seconds)초). 클립보드에도 복사했습니다.")
         Log.write("회의록 완성 — \(target.path), 받아쓰기 \(Int(notes.transcribeSeconds))초 + 요약 \(Int(notes.summarizeSeconds))초")
+        // 목록에 남긴다. 받아쓴 구간은 커서 파일로 따로 둔다.
+        let id = UUID().uuidString
+        MeetingHistoryStore.saveSegments(notes.segments, id: id)
+        let audioSeconds2 = CMTimeGetSeconds(AVURLAsset(url: source).duration)
+        MeetingHistoryStore.add(MeetingRecord(
+            id: id, title: stem, date: Date(), kind: meetingKind,
+            seconds: audioSeconds2.isFinite && audioSeconds2 > 0 ? audioSeconds2 : nil,
+            todoCount: MeetingHistoryStore.countTodos(in: notes.notes),
+            notesPath: target.path, audioPath: source.path))
+        model.meetingHistory = MeetingHistoryStore.load()
+
         flashDoneRing()
         // Finder 로 파일만 보여 주고 끝내면 사용자가 .md 를 열 앱을 찾아야 한다.
         // 앱 안에서 바로 읽고 고칠 수 있게 창을 띄운다.
@@ -1949,6 +1972,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         model.phase = .meeting(run)
         showPopover()
+    }
+
+    /// 만들어 둔 회의록을 다시 연다. 본문은 파일에서 읽는다 — 사용자가 고쳤을 수 있다.
+    private func openMeetingRecord(_ record: MeetingRecord) {
+        guard let notes = try? String(contentsOf: record.notesFile, encoding: .utf8) else {
+            setState(state, message: "회의록 파일을 찾지 못했습니다. 옮기거나 지우셨나요?")
+            model.meetingHistory = MeetingHistoryStore.load()
+            return
+        }
+        MeetingWindow.shared.show(MeetingDocument(
+            title: record.title, audio: record.audioFile, notesFile: record.notesFile,
+            recordedAt: record.date, duration: record.seconds,
+            notes: notes, segments: MeetingHistoryStore.segments(id: record.id)))
     }
 
     @objc private func cancelMeetingNotes() {

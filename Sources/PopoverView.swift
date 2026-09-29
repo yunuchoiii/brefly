@@ -799,14 +799,15 @@ struct PopoverTabBar: View {
 struct MeetingTabView: View {
     @ObservedObject var model: AppModel
     @State private var dropTargeted = false
+    @State private var showAll = false
 
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: 8) {
-                row(icon: "person.2", title: "대면 회의 녹음", detail: "이 맥의 마이크로 듣습니다",
+                row(icon: "person.2", title: "대면 회의 녹음", detail: nil,
                     fill: .meetingRow1, dot: true, dashed: false,
                     action: model.actions.startMeetingInPerson)
-                row(icon: "video", title: "화상 회의 녹음", detail: "내 목소리와 상대방 소리를 함께 듣습니다",
+                row(icon: "video", title: "화상 회의 녹음", detail: nil,
                     fill: .meetingRow2, dot: true, dashed: false,
                     action: model.actions.startMeetingVideoCall)
                 row(icon: "doc", title: "녹음 파일로 만들기…", detail: "파일을 여기에 끌어다 놓아도 됩니다",
@@ -833,23 +834,53 @@ struct MeetingTabView: View {
 
             HairLine()
 
-            VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 2) {
                 HStack {
-                    Text("최근 회의록").font(.system(size: 12, weight: .semibold)).foregroundColor(.text2)
+                    Text("최근 회의록")
+                        .font(.system(size: 11, weight: .bold)).foregroundColor(.text3)
+                        .kerning(0.4)
                     Spacer()
+                    // 시안은 두 개만 보여 준다. 더 있으면 펼쳐서 본다 —
+                    // 목록 화면을 따로 만들 만큼 쌓이는 물건이 아니다.
+                    if model.meetingHistory.count > 2 {
+                        Button(showAll ? "접기" : "모두 보기") { showAll.toggle() }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11)).foregroundColor(.text3)
+                    }
                 }
-                .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 4)
+                .padding(.bottom, 4)
 
-                Text("아직 만든 회의록이 없어요.")
-                    .font(.system(size: 12)).foregroundColor(.text4)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16).padding(.top, 6).padding(.bottom, 14)
+                if model.meetingHistory.isEmpty {
+                    Text("아직 만든 회의록이 없어요.")
+                        .font(.system(size: 12)).foregroundColor(.text4)
+                        .padding(.vertical, 6)
+                } else {
+                    ForEach(showAll ? model.meetingHistory : Array(model.meetingHistory.prefix(2))) { record in
+                        Button(action: { model.actions.openMeeting(record) }) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(record.title)
+                                    .font(.system(size: 12.5, weight: .semibold)).foregroundColor(.ink)
+                                    .lineLimit(1)
+                                Text(record.subtitle)
+                                    .font(.system(size: 11)).foregroundColor(.text3)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 8).padding(.vertical, 7)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
             }
+            .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.paperSoft)
         }
     }
 
-    private func row(icon: String, title: String, detail: String, fill: Color,
+    /// - Parameter detail: 없으면 한 줄로 그린다. 시안에서 대면·화상은 설명이 없다 —
+    ///   무엇인지 제목만으로 알 수 있고, 설명을 붙이면 세 줄이 다 빽빽해진다.
+    private func row(icon: String, title: String, detail: String?, fill: Color,
                      dot: Bool, dashed: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 11) {
@@ -857,8 +888,10 @@ struct MeetingTabView: View {
                     .frame(width: 18)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(title).font(.system(size: 13, weight: .bold)).foregroundColor(.onMeetingRow)
-                    Text(detail).font(.system(size: 11)).foregroundColor(.onMeetingRowSub)
-                        .fixedSize(horizontal: false, vertical: true)
+                    if let detail {
+                        Text(detail).font(.system(size: 11)).foregroundColor(.onMeetingRowSub)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 Spacer(minLength: 0)
                 // 누르면 바로 녹음이 시작되는 줄에만 붙인다. 파일은 창을 여는 동작이다.

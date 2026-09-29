@@ -85,7 +85,15 @@ enum PreviewRenderer {
             startedAt: Date().addingTimeInterval(-96), stage: .summarizing, fraction: nil))
         snap("1d-meeting-summarizing")
 
-        // 회의록 탭. 시작 방법 셋이 보여야 한다.
+        // 회의록 탭. 시작 방법 셋과 최근 목록이 보여야 한다.
+        model.meetingHistory = [
+            MeetingRecord(id: "a", title: "주간 기획 회의",
+                          date: Date().addingTimeInterval(-86400), kind: .videoCall,
+                          seconds: 2112, todoCount: 3, notesPath: "/tmp/a.md", audioPath: "/tmp/a.m4a"),
+            MeetingRecord(id: "b", title: "고객 인터뷰 — 3차",
+                          date: Date().addingTimeInterval(-86400 * 5), kind: .file,
+                          seconds: 3120, todoCount: 0, notesPath: "/tmp/b.md", audioPath: "/tmp/b.m4a"),
+        ]
         // ⚠️ 앞 단계에서 phase 가 남아 있으면 그 화면이 이긴다. 대기로 돌려놓고 찍는다.
         model.phase = .idle
         model.tab = .meeting

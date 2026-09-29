@@ -87,6 +87,9 @@ final class AppModel: ObservableObject {
     ///    상황이 정한다 — 회의를 녹음하거나 회의록을 만드는 중이면 회의록 탭, 아니면 늘 받아쓰기 탭.
     @Published var tab = Tab.dictation
 
+    /// 만들어 둔 회의록 목록. 팝오버 회의록 탭이 보여 준다.
+    @Published var meetingHistory: [MeetingRecord] = MeetingHistoryStore.load()
+
     // 녹음 중
     @Published var elapsed: TimeInterval = 0
     /// 최근 파형 레벨. [0]이 가장 새 값. 0…1.
@@ -124,6 +127,8 @@ final class AppModel: ObservableObject {
         var makeMeetingNotes: () -> Void = {}
         /// 파일을 끌어다 놓았을 때. 고르기 창을 건너뛴다.
         var makeMeetingNotesFrom: (URL) -> Void = { _ in }
+        /// 만들어 둔 회의록을 다시 연다.
+        var openMeeting: (MeetingRecord) -> Void = { _ in }
         var cancelMeetingNotes: () -> Void = {}
         /// 지금부터 회의를 녹음한다. 대면은 마이크만, 화상은 스피커 소리까지 잡는다.
         var startMeetingInPerson: () -> Void = {}
