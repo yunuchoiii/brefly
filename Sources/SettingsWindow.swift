@@ -753,6 +753,7 @@ struct InkToggle: View {
                     .shadow(color: .black.opacity(0.15), radius: 1, y: 0.5)
             }
         }
+        .contentShape(Rectangle())
         .buttonStyle(.plain)
     }
 }
@@ -889,7 +890,7 @@ struct HotKeyRecorderField: View {
         }
         .buttonStyle(.plain)
         .fixedSize()
-        .help(recording ? "Esc 로 취소 · 수정자 키만 눌렀다 떼도 저장됩니다" : "클릭해서 바꾸기")
+        .help(recording ? "Esc 로 취소 · 수정자 키만 눌렀다 떼도 저장됩니다." : "클릭해서 바꾸기")
         .onDisappear { stop() }
     }
 
@@ -1004,6 +1005,7 @@ struct UsageContextSection: View {
                     }
                     .font(.system(size: 12)).foregroundColor(.text2)
                 }
+                .contentShape(Rectangle())
                 .buttonStyle(.plain)
 
                 if showExtras {

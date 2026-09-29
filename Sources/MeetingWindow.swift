@@ -135,8 +135,12 @@ struct MeetingResultView: View {
                 Text(title)
                     .font(.system(size: 12.5, weight: on ? .semibold : .regular))
                     .foregroundColor(on ? .ink : .text3)
+                    // ⚠️ 글자에만 눌리는 영역이 잡히면 옆의 빈 곳을 눌러도 안 바뀐다.
+                    //    위아래 여백까지 눌리게 넓힌다.
+                    .padding(.horizontal, 4).padding(.top, 4)
                 Rectangle().fill(on ? Color.coral : Color.clear).frame(height: 2)
             }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -237,7 +241,7 @@ struct MeetingResultView: View {
             document.notes = draft
             // 고친 내용은 곧바로 파일에 넣는다. "저장" 을 또 찾게 하면 안 고친 채로 닫는다.
             try? draft.write(to: document.notesFile, atomically: true, encoding: .utf8)
-            flash("고친 내용을 .md 파일에 저장했습니다")
+            flash("고친 내용을 .md 파일에 저장했습니다.")
             editing = false
         } else {
             draft = document.notes

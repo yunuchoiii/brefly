@@ -660,11 +660,11 @@ private struct MicStep: View {
                     WizardButton("시스템 설정 열기", style: .primary) { SystemSettings.open(.microphone) }
                     WizardButton("다시 확인", style: .outline) { model.refreshMic() }
                 }
-                Text("한 번 거부하면 시스템 창이 다시 뜨지 않아 설정에서 직접 켜야 합니다")
+                Text("한 번 거부하면 시스템 창이 다시 뜨지 않아 설정에서 직접 켜야 합니다.")
                     .font(.system(size: 11.5)).foregroundColor(.text4)
             default:
                 PermissionBadge(state: .idle, icon: "mic")
-                Text("마이크를 허용해 주세요").font(.system(size: 21, weight: .heavy)).foregroundColor(.ink)
+                Text("마이크를 허용해 주세요.").font(.system(size: 21, weight: .heavy)).foregroundColor(.ink)
                 if model.mic == .requesting {
                     (Text("지금 뜬 시스템 창에서 ") + Text("허용").fontWeight(.bold).foregroundColor(.ink) + Text("을 눌러 주세요."))
                         .font(.system(size: 13.5)).foregroundColor(.text2)
@@ -699,7 +699,7 @@ private struct SpeechStep: View {
                         Image(systemName: "waveform.slash").font(.system(size: 20)).foregroundColor(.coralDeep).frame(width: 26)
                         VStack(alignment: .leading, spacing: 2) {
                             Text("음성 인식이 꺼져 있습니다").font(.system(size: 13.5, weight: .bold)).foregroundColor(.ink)
-                            Text("시스템 설정 > 개인정보 보호 및 보안 > 음성 인식에서 Brefly 를 켜 주세요")
+                            Text("시스템 설정 > 개인정보 보호 및 보안 > 음성 인식에서 Brefly 를 켜 주세요.")
                                 .font(.system(size: 12)).foregroundColor(.text2)
                         }
                         Spacer()
@@ -713,7 +713,7 @@ private struct SpeechStep: View {
                         LogoMark(size: 26, dot: .ink)
                         VStack(alignment: .leading, spacing: 2) {
                             Text("음성 인식 허용").font(.system(size: 13.5, weight: .bold)).foregroundColor(.ink)
-                            Text(model.speech == .requesting ? "지금 뜬 시스템 창에서 허용을 눌러 주세요" : "말한 내용을 글자로 바꾸는 데 필요합니다")
+                            Text(model.speech == .requesting ? "지금 뜬 시스템 창에서 허용을 눌러 주세요." : "말한 내용을 글자로 바꾸는 데 필요합니다.")
                                 .font(.system(size: 12)).foregroundColor(.text2)
                         }
                         Spacer()
@@ -854,17 +854,17 @@ private struct ModelStep: View {
                             Text("발급 페이지 열기").font(.system(size: 12, weight: .semibold)).foregroundColor(.ink).underline()
                         }.buttonStyle(.plain)
                         Spacer()
-                        Text("나중에 하면 원문만 복사됩니다").font(.system(size: 12)).foregroundColor(.text4)
+                        Text("나중에 하면 원문만 복사됩니다.").font(.system(size: 12)).foregroundColor(.text4)
                     }
                 }
             } else {
-                StepTitle("정리에 쓸 Gemini 무료 키를 넣어 주세요")
+                StepTitle("정리에 쓸 Gemini 무료 키를 넣어 주세요.")
                 keyField
                 if model.keyVerified {
                     GreenBox("\(Prefs.geminiModel) 로 연결됐습니다 · 요약을 정리할 준비가 됐어요")
                 } else {
                     helpBox
-                    Text("나중에 하면 정리 없이 원문만 복사됩니다").font(.system(size: 12)).foregroundColor(.text4)
+                    Text("나중에 하면 정리 없이 원문만 복사됩니다.").font(.system(size: 12)).foregroundColor(.text4)
                 }
             }
                 // 정리 방식은 쓸 AI 가 정해졌을 때만 묻는다. 아직 못 고른 화면은 이미 빽빽해서
@@ -896,7 +896,7 @@ private struct ModelStep: View {
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
-                    TextField("AIza… 키를 붙여 넣어 주세요", text: $model.keyDraft)
+                    TextField("AIza… 키를 붙여 넣어 주세요.", text: $model.keyDraft)
                         .textFieldStyle(.plain)
                         .font(.system(size: 13))
                         .padding(.vertical, 10).padding(.horizontal, 14)
@@ -921,9 +921,9 @@ private struct ModelStep: View {
     private var helpBox: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("키 받는 방법 — 카드 등록 없이 무료입니다").font(.system(size: 12, weight: .bold)).foregroundColor(.text2)
-            NumberedRow(1) { Text("aistudio.google.com/apikey 에 접속합니다") }
-            NumberedRow(2) { Text("\"키 만들기\"를 누릅니다") }
-            NumberedRow(3) { Text("만들어진 키를 복사해 위 칸에 붙여 넣습니다") }
+            NumberedRow(1) { Text("aistudio.google.com/apikey 에 접속합니다.") }
+            NumberedRow(2) { Text("\"키 만들기\"를 누릅니다.") }
+            NumberedRow(3) { Text("만들어진 키를 복사해 위 칸에 붙여 넣습니다.") }
             WizardButton("발급 페이지 열기", style: .primary, small: true) {
                 if let u = URL(string: "https://aistudio.google.com/apikey") { NSWorkspace.shared.open(u) }
             }
@@ -1008,7 +1008,7 @@ private struct HotKeyStep: View {
             .cornerRadius(10)
         } else {
             Button(action: { model.startRecording() }) {
-                Text("눌러서 원하는 키 조합을 입력합니다")
+                Text("눌러서 원하는 키 조합을 입력합니다.")
                     .font(.system(size: 13)).foregroundColor(.text4)
                     .padding(.vertical, 13).padding(.horizontal, 16)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1041,16 +1041,16 @@ private struct PasteStep: View {
                   subtitle: "⌘V 로 원하는 곳에 붙여 넣습니다 · 별도 허용 필요 없음", compact: waiting) { model.setAutoPaste(false) }
             radio(selected: model.autoPaste, title: "커서 위치에 자동으로 붙여넣기",
                   subtitle: model.autoPaste && waiting ? "손쉬운 사용 허용이 필요합니다"
-                          : "말이 끝나면 지금 쓰던 곳에 바로 들어갑니다" + (model.accessibilityTrusted ? "" : " · 손쉬운 사용 허용 필요"),
+                          : "말이 끝나면 지금 쓰던 곳에 바로 들어갑니다." + (model.accessibilityTrusted ? "" : " · 손쉬운 사용 허용 필요"),
                   compact: waiting) { model.setAutoPaste(true) }
 
             if waiting {
                 VStack(alignment: .leading, spacing: 9) {
                     NumberedRow(1) { WizardButton("시스템 설정 열기", style: .primary, small: true) { model.openAccessibilitySettings() } }
-                    NumberedRow(2) { Text("목록에서 Brefly 스위치를 켭니다") }
+                    NumberedRow(2) { Text("목록에서 Brefly 스위치를 켭니다.") }
                     NumberedRow(3) {
                         HStack(spacing: 8) {
-                            Text("돌아오면 자동으로 확인됩니다")
+                            Text("돌아오면 자동으로 확인됩니다.")
                             Spinner(size: 11)
                             Text("2초마다 확인 중").font(.system(size: 11.5)).foregroundColor(.text4)
                         }
@@ -1163,7 +1163,7 @@ private struct DoneStep: View {
                 Text("메뉴바 아이콘을 누르고 아래쪽 ‘회의록 만들기…’")
                     .font(.system(size: 11.5)).foregroundColor(.text2)
                 // 회의 내용이라 "어디로 가는지"가 제일 큰 걱정이다. 숨기지 않고 둘 다 적는다.
-                Text("녹음은 이 맥 밖으로 나가지 않습니다 · 요약할 때만 받아 적은 글을 AI 모델로 보냅니다")
+                Text("녹음은 이 맥 밖으로 나가지 않습니다 · 요약할 때만 받아 적은 글을 AI 모델로 보냅니다.")
                     .font(.system(size: 11)).foregroundColor(.text3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1434,14 +1434,14 @@ private struct PolishChoice: View {
         VStack(alignment: .leading, spacing: 7) {
             Text("정리 방식").font(.system(size: 12, weight: .bold)).foregroundColor(.text2)
             HStack(spacing: 8) {
-                option(title: "문장으로 다듬기", detail: "말한 그대로 읽기 좋게 고칩니다", on: !model.summaryOn) {
+                option(title: "문장으로 다듬기", detail: "말한 그대로 읽기 좋게 고칩니다.", on: !model.summaryOn) {
                     model.summaryOn = false
                 }
-                option(title: "핵심 요약", detail: "요점만 뽑아 불릿 목록으로 만듭니다", on: model.summaryOn) {
+                option(title: "핵심 요약", detail: "요점만 뽑아 목록 형태로 만듭니다.", on: model.summaryOn) {
                     model.summaryOn = true
                 }
             }
-            Text("메뉴바 팝오버의 “핵심 요약” 스위치로 언제든 바꿀 수 있습니다")
+            Text("메뉴바 팝오버의 “핵심 요약” 스위치로 언제든 바꿀 수 있습니다.")
                 .font(.system(size: 11)).foregroundColor(.text3)
         }
     }
