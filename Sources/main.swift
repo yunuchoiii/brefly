@@ -1,5 +1,6 @@
 import AppKit
 import Speech
+import UniformTypeIdentifiers
 import SwiftUI
 import Combine
 
@@ -285,6 +286,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var state: AppState = .idle
     private var lastMessage = "준비됨"
     private var lastResult = ""
+    /// 회의록을 만드는 중인지. 겹쳐 돌리면 받아쓰기 모델이 두 번 올라가 메모리가 터진다.
+    private var isMakingMeetingNotes = false
+    /// 내려받기 중에 풀려나면 세션이 끝난다. 끝날 때까지 붙잡아 둔다.
+    private var modelDownloader: ModelDownloader?
     private var partialText = ""
 
     // 팝오버(시안 1a/1b/1c)
@@ -1155,6 +1160,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         statusLine.isEnabled = false
         menu.addItem(statusLine)
 
+        let meetingItem = NSMenuItem(title: "녹음 파일로 회의록 만들기…",
+                                     action: #selector(summarizeRecording), keyEquivalent: "")
+        meetingItem.target = self
+        // 처리 중에는 막는다. 두 개를 같이 돌리면 모델을 두 번 올려 메모리가 터진다.
+        meetingItem.isEnabled = !isMakingMeetingNotes
+        menu.addItem(meetingItem)
+
         let settingsItem = NSMenuItem(title: "설정 창 열기…", action: #selector(openSettingsWindow), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
@@ -1432,6 +1444,102 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     @objc private func toggleServerRecognition() {
         Prefs.forceServerRecognition.toggle()
         setState(state, message: Prefs.forceServerRecognition ? "애플 서버 인식 사용" : "온디바이스 인식 우선")
+    }
+
+    // MARK: 녹음 파일로 회의록 만들기
+
+    @objc private func summarizeRecording() {
+        guard !isMakingMeetingNotes else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.audio, .movie]
+        panel.allowsMultipleSelection = false
+        panel.message = "회의 녹음 파일을 고르세요"
+        panel.prompt = "회의록 만들기"
+        // 메뉴바 앱이라 먼저 앞으로 나오지 않으면 창이 뒤에 숨는다.
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        ensureModelThenMakeNotes(for: url)
+    }
+
+    /// 모델이 없으면 먼저 받는다. 547MB 라 묻지 않고 받으면 안 된다.
+    private func ensureModelThenMakeNotes(for url: URL) {
+        if ModelStore.hasTranscriptionModel {
+            makeMeetingNotes(for: url)
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "받아쓰기 모델을 내려받을까요?"
+        alert.informativeText = "회의록을 만들려면 받아쓰기 모델(약 547MB)이 필요합니다. 한 번만 받으면 됩니다.\n"
+            + "받은 뒤에는 인터넷 없이도 회의록을 만들 수 있고, 녹음이 밖으로 나가지 않습니다."
+        alert.addButton(withTitle: "내려받기")
+        alert.addButton(withTitle: "취소")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        isMakingMeetingNotes = true
+        setState(state, message: "받아쓰기 모델 내려받는 중…")
+        let downloader = ModelDownloader()
+        modelDownloader = downloader
+        downloader.download(onProgress: { [weak self] progress in
+            guard let self else { return }
+            self.setState(self.state, message: "모델 내려받는 중 \(Int(progress.fraction * 100))% (\(progress.text))")
+        }, completion: { [weak self] result in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                self.isMakingMeetingNotes = false
+                self.modelDownloader = nil
+                switch result {
+                case .success: self.makeMeetingNotes(for: url)
+                case .failure(let error): self.setState(self.state, message: error.localizedDescription)
+                }
+            }
+        })
+    }
+
+    private func makeMeetingNotes(for url: URL) {
+        isMakingMeetingNotes = true
+        setState(state, message: "회의록 만드는 중…")
+        MeetingNotes.make(audio: url, onProgress: { [weak self] line in
+            guard let self else { return }
+            self.setState(self.state, message: "회의록: \(line)")
+        }, completion: { [weak self] result in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                self.isMakingMeetingNotes = false
+                switch result {
+                case .success(let notes): self.finishMeetingNotes(notes, source: url)
+                case .failure(let error):
+                    self.setState(self.state, message: error.localizedDescription)
+                    Log.write("회의록 실패: \(error.localizedDescription)")
+                }
+            }
+        })
+    }
+
+    /// 녹음 파일 옆에 둔다. 앱 안 어딘가에 숨겨 두면 사용자가 찾지 못한다.
+    /// 그 자리에 못 쓰면(읽기 전용 위치 등) 앱 폴더로 물러선다.
+    private func finishMeetingNotes(_ notes: MeetingNotes.Result, source: URL) {
+        let stem = source.deletingPathExtension().lastPathComponent
+        let name = stem + " 회의록.md"
+        var target = source.deletingLastPathComponent().appendingPathComponent(name)
+        let body = "# " + stem + "\n\n" + notes.notes + "\n"
+        do {
+            try body.write(to: target, atomically: true, encoding: .utf8)
+        } catch {
+            let fallback = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support/Brefly/meetings", isDirectory: true)
+            try? FileManager.default.createDirectory(at: fallback, withIntermediateDirectories: true)
+            target = fallback.appendingPathComponent(name)
+            try? body.write(to: target, atomically: true, encoding: .utf8)
+            Log.write("회의록을 녹음 옆에 못 써서 앱 폴더로 옮김: \(error.localizedDescription)")
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(notes.notes, forType: .string)
+        lastResult = notes.notes
+        let seconds = Int(notes.transcribeSeconds + notes.summarizeSeconds)
+        setState(state, message: "회의록을 만들었습니다 (\(seconds)초). 클립보드에도 복사했습니다.")
+        Log.write("회의록 완성 — \(target.path), 받아쓰기 \(Int(notes.transcribeSeconds))초 + 요약 \(Int(notes.summarizeSeconds))초")
+        NSWorkspace.shared.activateFileViewerSelecting([target])
     }
 
     @objc private func copyLast() {
