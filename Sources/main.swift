@@ -117,7 +117,16 @@ if let i = CommandLine.arguments.firstIndex(of: "--render-menubar"), i + 1 < Com
 if let i = CommandLine.arguments.firstIndex(of: "--meeting-notes"), i + 1 < CommandLine.arguments.count {
     let audio = URL(fileURLWithPath: CommandLine.arguments[i + 1])
     let done = DispatchSemaphore(value: 0)
-    MeetingNotes.make(audio: audio, onProgress: { print("  \($0.text)") }) { result in
+    // 진단용: --cancel-after <초> 로 중간에 멈춰 본다. 취소가 안 먹으면 사용자가 갇힌다.
+    let token = CancelToken()
+    if let j = CommandLine.arguments.firstIndex(of: "--cancel-after"), j + 1 < CommandLine.arguments.count,
+       let after = Double(CommandLine.arguments[j + 1]) {
+        DispatchQueue.global().asyncAfter(deadline: .now() + after) {
+            print("  \(after)초 지나 취소를 누른다")
+            token.cancel()
+        }
+    }
+    MeetingNotes.make(audio: audio, cancel: token, onProgress: { print("  \($0.text)") }) { result in
         switch result {
         case .success(let notes):
             print("OK 받아쓰기 \(String(format: "%.1f", notes.transcribeSeconds))초 + 요약 \(String(format: "%.1f", notes.summarizeSeconds))초")
@@ -330,6 +339,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var isMakingMeetingNotes = false
     /// 내려받기 중에 풀려나면 세션이 끝난다. 끝날 때까지 붙잡아 둔다.
     private var modelDownloader: ModelDownloader?
+    /// 회의록을 멈추라는 표. 1~2분 걸리는 일이라 중간에 그만둘 수 있어야 한다.
+    private var meetingCancel: CancelToken?
+    /// 메뉴에 보여 줄 진행 문구. 메뉴를 열었을 때 어디쯤인지 알 수 있어야 한다.
+    private var meetingProgressLine: String?
     private var partialText = ""
 
     // 팝오버(시안 1a/1b/1c)
@@ -1214,6 +1227,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         statusLine.isEnabled = false
         menu.addItem(statusLine)
 
+        if isMakingMeetingNotes {
+            // 처리 중에는 어디쯤인지와 멈추는 법을 맨 위에 둔다. 1~2분 걸리는 일이라
+            // 메뉴를 여는 이유가 대개 이 둘이다.
+            let line = NSMenuItem(title: "회의록 만드는 중 — \(meetingProgressLine ?? "준비 중")",
+                                  action: nil, keyEquivalent: "")
+            line.isEnabled = false
+            menu.addItem(line)
+            let cancelItem = NSMenuItem(title: "회의록 만들기 취소",
+                                        action: #selector(cancelMeetingNotes), keyEquivalent: "")
+            cancelItem.target = self
+            menu.addItem(cancelItem)
+            menu.addItem(.separator())
+        }
+
         let meetingItem = NSMenuItem(title: "녹음 파일로 회의록 만들기…",
                                      action: #selector(summarizeRecording), keyEquivalent: "")
         meetingItem.target = self
@@ -1622,23 +1649,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func makeMeetingNotes(for url: URL) {
         isMakingMeetingNotes = true
+        let cancel = CancelToken()
+        meetingCancel = cancel
         setState(state, message: "회의록 만드는 중…")
-        MeetingNotes.make(audio: url, onProgress: { [weak self] progress in
+        MeetingNotes.make(audio: url, cancel: cancel, onProgress: { [weak self] progress in
             guard let self else { return }
             DispatchQueue.main.async {
                 self.meetingRing = (progress.fraction, .working)
+                self.meetingProgressLine = progress.text
                 self.setState(self.state, message: "회의록: \(progress.text)")
             }
         }, completion: { [weak self] result in
             guard let self else { return }
             DispatchQueue.main.async {
                 self.isMakingMeetingNotes = false
+                self.meetingCancel = nil
+                self.meetingProgressLine = nil
                 switch result {
                 case .success(let notes): self.finishMeetingNotes(notes, source: url)
                 case .failure(let error):
                     self.meetingRing = nil
                     self.setState(self.state, message: error.localizedDescription)
-                    Log.write("회의록 실패: \(error.localizedDescription)")
+                    Log.write("회의록 끝남: \(error.localizedDescription)")
                 }
             }
         })
@@ -1669,6 +1701,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         Log.write("회의록 완성 — \(target.path), 받아쓰기 \(Int(notes.transcribeSeconds))초 + 요약 \(Int(notes.summarizeSeconds))초")
         flashDoneRing()
         NSWorkspace.shared.activateFileViewerSelecting([target])
+    }
+
+    @objc private func cancelMeetingNotes() {
+        meetingCancel?.cancel()
+        setState(state, message: "회의록을 멈춥니다…")
+        Log.write("회의록 취소를 눌렀다")
     }
 
     @objc private func copyLast() {

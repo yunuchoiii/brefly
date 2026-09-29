@@ -21,6 +21,7 @@ enum Whisper {
     }
 
     enum Failure: LocalizedError {
+        case cancelled
         case modelMissing(URL)
         case modelUnreadable(URL)
         case audioUnreadable(URL)
@@ -28,6 +29,7 @@ enum Whisper {
 
         var errorDescription: String? {
             switch self {
+            case .cancelled:                return "취소했습니다."
             case .modelMissing(let url):    return "받아쓰기 모델이 없습니다: \(url.lastPathComponent)"
             case .modelUnreadable(let url): return "받아쓰기 모델을 열지 못했습니다: \(url.lastPathComponent)"
             case .audioUnreadable(let url): return "소리 파일을 읽지 못했습니다: \(url.lastPathComponent)"
@@ -58,6 +60,7 @@ enum Whisper {
     /// - Parameter onProgress: 0~1. 회의록은 1~2분이 걸려서 진행률이 없으면 멈춘 줄 안다.
     static func transcribe(audio: URL, model: URL, language: String = "ko",
                            threads: Int32 = 8,
+                           cancel: CancelToken? = nil,
                            onProgress: ((Double) -> Void)? = nil) throws -> [Segment] {
         guard FileManager.default.fileExists(atPath: model.path) else { throw Failure.modelMissing(model) }
         let samples = try monoSamples(audio)
@@ -81,6 +84,15 @@ enum Whisper {
         // 진행 표시를 끄지 않으면 whisper.cpp 가 stderr 로 줄줄이 찍는다.
         params.no_timestamps = false
 
+        // 멈추라는 표를 C 쪽에 넘긴다. whisper 는 창을 하나 끝낼 때마다 물어본다.
+        if let cancel {
+            params.abort_callback = { userData in
+                guard let userData else { return false }
+                return Unmanaged<CancelToken>.fromOpaque(userData).takeUnretainedValue().isCancelled
+            }
+            params.abort_callback_user_data = Unmanaged.passUnretained(cancel).toOpaque()
+        }
+
         let progressBox = onProgress.map { ProgressBox($0) }
         if let progressBox {
             params.progress_callback = { _, _, percent, userData in
@@ -94,9 +106,11 @@ enum Whisper {
         return try language.withCString { languagePointer in
             params.language = languagePointer
             // ⚠️ 상자를 붙잡아 둔다. 중간에 풀려나면 콜백이 사라진 객체를 가리킨다.
-            let code = withExtendedLifetime(progressBox) {
+            let code = withExtendedLifetime((progressBox, cancel)) {
                 whisper_full(context, params, samples, Int32(samples.count))
             }
+            // 멈춘 것도 whisper 는 실패로 돌려준다. 사용자가 누른 것이면 오류로 보이면 안 된다.
+            if cancel?.isCancelled == true { throw Failure.cancelled }
             guard code == 0 else { throw Failure.failed(code) }
 
             var segments: [Segment] = []

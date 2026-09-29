@@ -102,6 +102,7 @@ enum MeetingNotes {
     // MARK: - 한 줄로 엮기
 
     static func make(audio: URL,
+                     cancel: CancelToken? = nil,
                      onProgress: @escaping (Progress) -> Void,
                      completion: @escaping (Swift.Result<Result, Error>) -> Void) {
         onProgress(Progress(stage: .transcribing, fraction: 0))
@@ -110,6 +111,7 @@ enum MeetingNotes {
             let segments: [Whisper.Segment]
             do {
                 segments = try Whisper.transcribe(audio: audio, model: ModelStore.transcriptionModel,
+                                                  cancel: cancel,
                                                   onProgress: { onProgress(Progress(stage: .transcribing, fraction: $0)) })
             } catch {
                 completion(.failure(error))
@@ -122,6 +124,11 @@ enum MeetingNotes {
             if transcript != heard { Log.write("회의록 용어 치환 적용") }
             guard transcript.count > 30 else {
                 completion(.failure(Failure.emptyAnswer))
+                return
+            }
+            // 받아쓰기가 끝난 직후에도 한 번 본다. 여기서 안 막으면 취소해 놓고 요약 요청이 나간다.
+            if cancel?.isCancelled == true {
+                completion(.failure(Whisper.Failure.cancelled))
                 return
             }
             onProgress(Progress(stage: .summarizing, fraction: nil))
