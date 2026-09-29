@@ -84,6 +84,13 @@ extension Color {
     static let line       = Color(nsColor: Theme.dyn(Theme.line, Theme.darkHair))
     static let lineStrong = Color(nsColor: Theme.dyn(Theme.lineStrong, Theme.darkLine))
     static let radioOff   = Color(nsColor: Theme.dyn(Theme.radioOff, Theme.darkSub))
+    /// 회의록 시작 줄 셋. 시안이 색을 단계로 낮춰 "누르면 바로 시작 / 창을 여는 동작"을 가른다.
+    /// 어두운 모드에서는 뒤집는다 — 어두운 배경 위에 어두운 칸을 얹으면 안 보인다.
+    static let meetingRow1 = Color(nsColor: Theme.dyn(NSColor(hex: 0x16181d), NSColor(hex: 0xf2f3f5)))
+    static let meetingRow2 = Color(nsColor: Theme.dyn(NSColor(hex: 0x2a2d35), NSColor(hex: 0xdcdfe4)))
+    static let meetingRow3 = Color(nsColor: Theme.dyn(NSColor(hex: 0x3a3e47), NSColor(hex: 0xc9cdd4)))
+    static let onMeetingRow = Color(nsColor: Theme.dyn(NSColor.white, NSColor(hex: 0x16181d)))
+    static let onMeetingRowSub = Color(nsColor: Theme.dyn(NSColor(hex: 0xcdd1d8), NSColor(hex: 0x4b515c)))
     static let text2      = Color(nsColor: Theme.dyn(Theme.text2, Theme.darkText))
     static let text3      = Color(nsColor: Theme.dyn(Theme.text3, Theme.darkSub))
     static let text4      = Color(nsColor: Theme.dyn(Theme.text4, Theme.darkMuted))

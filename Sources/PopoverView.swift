@@ -54,7 +54,7 @@ struct IdleView: View {
                 Spacer()
                 Circle().fill(model.micReady ? Color.green : Color.coral).frame(width: 8, height: 8)
             }
-            .padding(.horizontal, 16).padding(.top, 16)
+            .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 10)
 
             PopoverTabBar(model: model)
             HairLine()
@@ -132,8 +132,9 @@ struct IdleView: View {
             HairLine()
 
             HStack {
-                Spacer()
                 Button("설정", action: model.actions.openSettings).buttonStyle(.plain)
+                Spacer()
+                Button("Brefly 종료", action: model.actions.quit).buttonStyle(.plain)
             }
             .font(.system(size: 12)).foregroundColor(.text3)
             .padding(.horizontal, 16).padding(.vertical, 10)
@@ -762,36 +763,39 @@ struct MeetingRecordingView: View {
     }
 }
 
-/// 팝오버 탭. 회의록은 시작하는 길이 셋이라 받아쓰기와 한 화면에 두면 무엇이 무엇인지 알 수 없다.
+/// 팝오버 탭. 시안은 밑줄이 아니라 **분절 컨트롤**이다 — 바탕 위에 고른 쪽만 흰 칸이 얹힌다.
 struct PopoverTabBar: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        HStack(spacing: 18) {
+        HStack(spacing: 2) {
             tab("받아쓰기", .dictation)
             tab("회의록", .meeting)
-            Spacer()
         }
-        .padding(.horizontal, 16).padding(.top, 12)
+        .padding(2)
+        .background(Color.line)
+        .cornerRadius(9)
+        .padding(.horizontal, 16).padding(.bottom, 12)
     }
 
     private func tab(_ title: String, _ value: AppModel.Tab) -> some View {
         let on = model.tab == value
         return Button(action: { model.tab = value }) {
-            VStack(spacing: 6) {
-                Text(title)
-                    .font(.system(size: 12.5, weight: on ? .semibold : .regular))
-                    .foregroundColor(on ? .ink : .text3)
-                Rectangle().fill(on ? Color.coral : Color.clear).frame(height: 2)
-            }
-            .contentShape(Rectangle())
+            Text(title)
+                .font(.system(size: 12.5, weight: on ? .bold : .semibold))
+                .foregroundColor(on ? .ink : .text2)
+                .frame(maxWidth: .infinity).padding(.vertical, 6)
+                .background(on ? Color.paper : Color.clear)
+                .cornerRadius(7)
+                .shadow(color: on ? Color.black.opacity(0.12) : .clear, radius: 1, y: 1)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 }
 
-/// 회의록 탭. 시작하는 길이 셋이다 — 대면·화상은 누르면 바로 녹음이 시작되고,
-/// 파일은 창을 여는 동작이라 점선으로 갈라 둔다.
+/// 회의록 탭. 시작하는 길이 셋이고, 시안은 색을 한 단계씩 낮춰 무게를 가른다 —
+/// 대면이 가장 진하고, 파일은 가장 옅으면서 점선이다(창을 여는 동작이라).
 struct MeetingTabView: View {
     @ObservedObject var model: AppModel
     @State private var dropTargeted = false
@@ -799,45 +803,33 @@ struct MeetingTabView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: 8) {
-                startRow(title: "대면 회의 녹음",
-                         detail: "이 맥의 마이크로 듣습니다",
-                         action: model.actions.startMeetingInPerson)
-                startRow(title: "화상 회의 녹음",
-                         detail: "내 목소리와 상대방 소리를 함께 듣습니다",
-                         action: model.actions.startMeetingVideoCall)
-
-                Button(action: model.actions.makeMeetingNotes) {
-                    VStack(spacing: 2) {
-                        Text("녹음 파일로 만들기…")
-                            .font(.system(size: 12.5, weight: .semibold)).foregroundColor(.ink)
-                        Text("파일을 여기에 끌어다 놓아도 됩니다")
-                            .font(.system(size: 10.5)).foregroundColor(.text3)
+                row(icon: "person.2", title: "대면 회의 녹음", detail: "이 맥의 마이크로 듣습니다",
+                    fill: .meetingRow1, dot: true, dashed: false,
+                    action: model.actions.startMeetingInPerson)
+                row(icon: "video", title: "화상 회의 녹음", detail: "내 목소리와 상대방 소리를 함께 듣습니다",
+                    fill: .meetingRow2, dot: true, dashed: false,
+                    action: model.actions.startMeetingVideoCall)
+                row(icon: "doc", title: "녹음 파일로 만들기…", detail: "파일을 여기에 끌어다 놓아도 됩니다",
+                    fill: .meetingRow3, dot: false, dashed: true,
+                    action: model.actions.makeMeetingNotes)
+                    .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
+                        guard let provider = providers.first else { return false }
+                        _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                            guard let url else { return }
+                            DispatchQueue.main.async { model.actions.makeMeetingNotesFrom(url) }
+                        }
+                        return true
                     }
-                    .frame(maxWidth: .infinity).padding(.vertical, 11)
-                    .background(dropTargeted ? Color.fill : Color.clear)
-                    .overlay(RoundedRectangle(cornerRadius: 10)
-                        .strokeBorder(dropTargeted ? Color.coral : Color.lineStrong,
-                                      style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
-                    .cornerRadius(10)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
-                    guard let provider = providers.first else { return false }
-                    _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                        guard let url else { return }
-                        DispatchQueue.main.async { model.actions.makeMeetingNotesFrom(url) }
-                    }
-                    return true
-                }
 
-                // 회의 내용이라 "어디로 가는지"가 제일 큰 걱정이다. 시작하는 자리에서 먼저 말한다.
-                Text("녹음은 이 맥 밖으로 나가지 않습니다 · 요약 때만 글을 AI 로 보냅니다")
-                    .font(.system(size: 10.5)).foregroundColor(.text3)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 5) {
+                    Image(systemName: "lock").font(.system(size: 9.5)).foregroundColor(.text2)
+                    Text("녹음은 이 컴퓨터 내부에만 저장됩니다.")
+                        .font(.system(size: 11)).foregroundColor(.text2)
+                    Spacer(minLength: 0)
+                }
+                .padding(.top, 2)
             }
-            .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 12)
+            .padding(.horizontal, 16).padding(.bottom, 12)
 
             HairLine()
 
@@ -857,19 +849,30 @@ struct MeetingTabView: View {
         }
     }
 
-    /// 누르면 바로 녹음이 시작되는 줄. 코랄 점으로 "지금 시작한다"를 알린다.
-    private func startRow(title: String, detail: String, action: @escaping () -> Void) -> some View {
+    private func row(icon: String, title: String, detail: String, fill: Color,
+                     dot: Bool, dashed: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 9) {
-                Circle().fill(Color.coral).frame(width: 7, height: 7)
+            HStack(spacing: 11) {
+                Image(systemName: icon).font(.system(size: 14)).foregroundColor(.onMeetingRow)
+                    .frame(width: 18)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(title).font(.system(size: 12.5, weight: .semibold)).foregroundColor(.ink)
-                    Text(detail).font(.system(size: 10.5)).foregroundColor(.text3)
+                    Text(title).font(.system(size: 13, weight: .bold)).foregroundColor(.onMeetingRow)
+                    Text(detail).font(.system(size: 11)).foregroundColor(.onMeetingRowSub)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
+                // 누르면 바로 녹음이 시작되는 줄에만 붙인다. 파일은 창을 여는 동작이다.
+                if dot { Circle().fill(Color.coral).frame(width: 8, height: 8) }
             }
-            .padding(.horizontal, 12).padding(.vertical, 9)
-            .background(Color.fill)
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .background(fill)
+            .overlay {
+                if dashed {
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(Color.onMeetingRowSub.opacity(dropTargeted ? 1 : 0.55),
+                                      style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                }
+            }
             .cornerRadius(10)
             .contentShape(Rectangle())
         }
