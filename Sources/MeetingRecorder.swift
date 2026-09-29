@@ -54,15 +54,22 @@ final class MeetingRecorder {
         systemBuffers = 0
         micTrack = try TrackWriter(url: session.mic)
         let input = engine.inputNode
-        // ⚠️ 스피커로 나가는 상대 목소리가 **마이크로 되돌아 들어온다**(실측: 두 갈래를 따로 받아썼더니
-        //    같은 문장이 양쪽에 다 있었다). 그대로 두면 회의록에 모든 말이 두 번 적힌다.
-        //    voice processing 을 켜면 macOS 가 에코를 지운다. 엔진을 켜기 전에 켜야 한다.
-        //    이어폰을 쓰면 애초에 안 생기는 문제지만, 노트북 스피커로 회의하는 사람이 더 많다.
-        do {
-            try input.setVoiceProcessingEnabled(true)
-        } catch {
-            Log.write("회의 녹음: 에코 제거를 못 켰다 — \(error.localizedDescription). 스피커로 들으면 상대 말이 두 번 적힌다.")
-        }
+        // ⚠️ 스피커로 나가는 상대 목소리가 **마이크로 되돌아 들어온다.** 두 갈래를 따로 받아썼더니
+        //    같은 문장이 양쪽에 다 있었다. 혼자 있는 방에서 노트북 스피커로 회의하는 것이 보통이라
+        //    이어폰을 전제할 수도 없다.
+        //
+        //    ⚠️ `setVoiceProcessingEnabled(true)` 로 고치려다 실패했다. **목소리까지 깎는다.**
+        //       사람이 같은 크기로 말하면서 잰 값이다(2026-09-29):
+        //
+        //         에코 제거 끔  최대 0.0756  48000Hz 1ch
+        //         에코 제거 켬  최대 0.0029  48000Hz 5ch   ← 26배 작아졌다. 5채널 모두 같은 값이라
+        //                                                   채널을 잘못 고른 것도 아니다.
+        //         믹서 경유     최대 0.0000  44100Hz 2ch   ← 아예 무음
+        //         출력 연결     엔진 시작 실패 (-10875)
+        //
+        //       다시 켜지 말 것. 대신 **글자 단계에서 겹치는 말을 걸러낸다** — 마이크에 섞인 에코는
+        //       같은 시각 시스템 트랙에 있는 것과 같은 말이므로, 시간으로 맞춰 빼면 된다.
+        //       그쪽이 오디오 API 와 씨름하는 것보다 확실하고 하드웨어를 안 탄다.
         let format = input.inputFormat(forBus: 0)
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
             self?.micTrack?.write(buffer)
