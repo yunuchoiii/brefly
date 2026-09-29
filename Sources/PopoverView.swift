@@ -627,13 +627,14 @@ struct MeetingProgressView: View {
 
     private struct Step {
         let title: String
-        let detail: String
+        /// 없으면 제목만 놓는다. 제목이 이미 뜻을 다 말하는 단계가 있다.
+        let detail: String?
     }
 
     private let steps = [
-        Step(title: "받아쓰기", detail: "이 맥 안에서 처리합니다 · 인터넷에 보내지 않습니다."),
-        Step(title: "요약하기", detail: "받아 적은 글만 AI 모델로 보냅니다."),
-        Step(title: "저장하고 복사하기", detail: "녹음 파일 옆에 .md 로 저장합니다."),
+        Step(title: "받아쓰기", detail: "이 컴퓨터 내부적으로 처리합니다."),
+        Step(title: "요약하기", detail: "받아 적은 글을 AI가 요약합니다."),
+        Step(title: "저장하고 복사하기", detail: nil),
     ]
 
     var body: some View {
@@ -654,8 +655,10 @@ struct MeetingProgressView: View {
                             Text(step.title)
                                 .font(.system(size: 12.5, weight: index == run.stepIndex ? .semibold : .regular))
                                 .foregroundColor(index <= run.stepIndex ? .ink : .text3)
-                            Text(step.detail).font(.system(size: 10.5)).foregroundColor(.text3)
-                                .fixedSize(horizontal: false, vertical: true)
+                            if let detail = step.detail {
+                                Text(detail).font(.system(size: 10.5)).foregroundColor(.text3)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                         Spacer(minLength: 0)
                     }
@@ -712,7 +715,7 @@ struct MeetingProgressView: View {
 }
 
 /// 회의를 지금 녹음하는 중. 받아쓰기 녹음과 같은 어두운 화면을 쓴다 — 같은 일(듣는 중)이라
-/// 같아 보여야 한다. 다른 점은 몇십 분씩 간다는 것과, 화상이면 두 갈래를 따로 보여 준다는 것이다.
+/// 같아 보여야 한다. 다른 점은 몇십 분씩 간다는 것이다.
 struct MeetingRecordingView: View {
     @ObservedObject var model: AppModel
     let run: AppModel.MeetingRecordingRun
@@ -737,17 +740,17 @@ struct MeetingRecordingView: View {
             .padding(.horizontal, 16).padding(.top, 16)
 
             // 소리가 들어오고 있는지 눈으로 본다. 끝나고서야 아는 것이 제일 나쁘다.
-            if run.inPerson {
-                Waveform(levels: model.meetingMicLevels)
-                    .frame(height: 44)
-                    .padding(.top, 14).padding(.bottom, 14)
-            } else {
-                VStack(spacing: 10) {
-                    track("내 목소리", levels: model.meetingMicLevels, on: true)
-                    track("상대방", levels: model.meetingSystemLevels, on: run.capturingSystem)
-                }
+            //
+            // ⚠️ 화상이어도 **한 줄로 합쳐 보여 준다.** 전에는 "내 목소리"와 "상대방"을 나눠
+            //    그렸는데, 내가 입을 다물고 있어도 상대가 말하면 "내 목소리" 막대가 같이 뛰었다.
+            //    스피커로 나간 상대 목소리가 마이크로 되돌아 들어오기 때문이다(에코).
+            //    소리 단계에서 떼는 건 이미 실패했고(`EchoFilter` 주석: 목소리까지 26배 감쇠),
+            //    레벨만 빼는 꼼수는 두 사람이 같이 말할 때 내 쪽을 지운다. 막대가 할 일은
+            //    "수음이 되고 있나"를 보여 주는 것뿐이니, 갈라서 틀리게 그리느니 합친다.
+            //    (받아쓰기에서 나/상대를 가르는 것은 그대로다 — 그쪽은 글자 단계라 에코를 뗀다.)
+            Waveform(levels: combinedLevels)
+                .frame(height: 44)
                 .padding(.top, 14).padding(.bottom, 14)
-            }
 
             if !run.inPerson, !run.capturingSystem {
                 // 모르고 회의를 다 녹음한 뒤에 알면 되돌릴 수 없다.
@@ -785,17 +788,10 @@ struct MeetingRecordingView: View {
         .onReceive(timer) { tick = $0 }
     }
 
-    private func track(_ label: String, levels: [Float], on: Bool) -> some View {
-        HStack(spacing: 10) {
-            Text(label)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(on ? .darkSub : .darkMuted)
-                .frame(width: 52, alignment: .leading)
-            Waveform(levels: on ? levels : Array(repeating: 0, count: 11))
-                .frame(height: 26)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 16)
+    /// 두 갈래 중 큰 쪽. 마이크만 쓰는 대면이거나 시스템 소리를 못 잡는 중이면 그냥 마이크다.
+    private var combinedLevels: [Float] {
+        guard !run.inPerson, run.capturingSystem else { return model.meetingMicLevels }
+        return zip(model.meetingMicLevels, model.meetingSystemLevels).map { max($0, $1) }
     }
 }
 
@@ -862,7 +858,8 @@ struct MeetingTabView: View {
                 }
                 .padding(.top, 2)
             }
-            .padding(.horizontal, 16).padding(.bottom, 12)
+            // 위 구분선에 카드가 붙어 있었다. 받아쓰기 탭의 첫 버튼과 같은 14 로 띄운다.
+            .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 12)
 
             HairLine()
 

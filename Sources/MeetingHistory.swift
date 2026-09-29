@@ -71,6 +71,17 @@ enum MeetingHistoryStore {
         }
     }
 
+    /// 다시 요약해서 "할 일" 개수가 달라졌을 때. 목록에 옛 숫자가 남으면 안 된다.
+    static func updateTodos(notesPath: String, count: Int) {
+        var list = load()
+        guard let i = list.firstIndex(where: { $0.notesPath == notesPath }) else { return }
+        let old = list[i]
+        list[i] = MeetingRecord(id: old.id, title: old.title, date: old.date, kind: old.kind,
+                                seconds: old.seconds, todoCount: count,
+                                notesPath: old.notesPath, audioPath: old.audioPath)
+        if let data = try? JSONEncoder().encode(list) { UserDefaults.standard.set(data, forKey: key) }
+    }
+
     /// 받아쓴 구간은 목록에 담기엔 너무 크다(35분이면 1300개쯤). 파일로 따로 둔다.
     /// 사용자 폴더에 부스러기를 남기지 않으려고 앱 폴더에 넣는다.
     private static var segmentsDirectory: URL {

@@ -146,10 +146,23 @@ enum PreviewRenderer {
             .init(text: "네, 그건 확정이고요. 문제는 처리 중 화면입니다.", start: 75, end: 79.1),
             .init(text: "창을 닫으면 아무것도 안 보여서 멈춘 줄 아시더라고요.", start: 123, end: 127.4),
         ]
+        // 화상 회의라 화자가 붙는다. 붙은 모습을 시안에서 보고 넘어가야 한다.
+        let labelled = sampleSegments.enumerated().map { i, s in
+            Whisper.Segment(text: s.text, start: s.start, end: s.end, speaker: i % 2 == 0 ? "상대" : "나")
+        }
         let sampleDoc = MeetingDocument(
             title: "주간 기획 회의", audio: URL(fileURLWithPath: "/Users/me/문서/회의/주간 기획 회의.m4a"),
             notesFile: URL(fileURLWithPath: "/Users/me/문서/회의/주간 기획 회의 회의록.md"),
-            recordedAt: Date(), duration: 2112, notes: sampleNotes, segments: sampleSegments)
+            recordedAt: Date(), duration: 2112, notes: sampleNotes, segments: labelled,
+            transcript: labelled.map { "\($0.speaker ?? ""): \($0.text)" }.joined(separator: "\n"),
+            speakersKnown: true)
+        // 요약만 실패한 모습. 이 화면이 없으면 사용자는 다 잃은 줄 안다.
+        var failedDoc = sampleDoc
+        failedDoc.summaryFailed = "요약에 실패했습니다 (503). This model is currently experiencing high demand."
+        failedDoc.notes = MeetingNotes.transcriptOnlyNotes(sampleDoc.transcript,
+                                                          error: MeetingNotes.Failure.badResponse(503, ""))
+        write(render(MeetingResultView(document: failedDoc).frame(width: 820, height: 600)),
+              to: dir.appendingPathComponent("3b-meeting-summary-failed.png"))
         write(render(MeetingResultView(document: sampleDoc).frame(width: 820, height: 600)),
               to: dir.appendingPathComponent("3-meeting-result.png"))
         write(render(MeetingResultView(document: sampleDoc).frame(width: 820, height: 600), dark: true),

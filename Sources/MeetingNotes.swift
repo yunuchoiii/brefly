@@ -19,6 +19,30 @@ enum MeetingNotes {
         let segments: [Whisper.Segment]
         let transcribeSeconds: Double
         let summarizeSeconds: Double
+        /// 요약이 끝내 실패했으면 그 까닭. `notes` 에는 받아 적은 원문이 들어 있다.
+        ///
+        /// ⚠️ 요약 실패를 `.failure` 로 돌려주지 않는 이유가 이것이다. 2026-09-29 에
+        ///    48분 회의를 4분 30초 걸려 받아 적고 나서 Gemini 503 하나에 통째로 버렸다.
+        ///    받아쓰기는 되돌릴 수 없고 요약은 다시 부르면 그만이다. 비싼 쪽이 싼 쪽의
+        ///    성공에 매달리면 안 된다.
+        var summaryFailed: Error? = nil
+    }
+
+    /// 요약이 실패했을 때 대신 저장할 본문. 받아 적은 것을 그대로 담는다 —
+    /// 요약은 몇 초면 다시 부르지만 받아쓰기는 그렇지 않다.
+    static func transcriptOnlyNotes(_ transcript: String, error: Error) -> String {
+        """
+        ## 요약하지 못했습니다
+
+        \(error.localizedDescription)
+
+        받아 적은 것은 아래에 그대로 두었습니다. 창 위의 **다시 요약**을 누르면
+        받아쓰기를 다시 하지 않고 요약만 다시 부릅니다.
+
+        ## 받아 적은 원문
+
+        \(transcript)
+        """
     }
 
     enum Failure: LocalizedError {
@@ -113,9 +137,12 @@ enum MeetingNotes {
 
     // MARK: - 한 줄로 엮기
 
+    /// - Parameter onTranscript: 받아쓰기가 끝나는 **즉시** 부른다. 요약을 부르기 전이다.
+    ///   부르는 쪽이 여기서 원문을 디스크에 떨궈 둔다 — 그 뒤로는 무슨 일이 나도 안 잃는다.
     static func make(audio: URL,
                      cancel: CancelToken? = nil,
                      onProgress: @escaping (Progress) -> Void,
+                     onTranscript: ((String, [Whisper.Segment]) -> Void)? = nil,
                      completion: @escaping (Swift.Result<Result, Error>) -> Void) {
         onProgress(Progress(stage: .transcribing, fraction: 0))
         let transcribeStarted = Date()
@@ -143,18 +170,36 @@ enum MeetingNotes {
                 completion(.failure(Whisper.Failure.cancelled))
                 return
             }
+            // 여기서 원문을 넘긴다. 요약 전이다 — 이 뒤로는 요약이 어떻게 되든 안 잃는다.
+            onTranscript?(transcript, segments)
             onProgress(Progress(stage: .summarizing, fraction: nil))
 
             let summarizeStarted = Date()
             summarize(transcript) { result in
-                completion(result.map {
-                    Result(transcript: transcript,
-                           notes: $0,
-                           segments: segments,
-                           transcribeSeconds: transcribeSeconds,
-                           summarizeSeconds: Date().timeIntervalSince(summarizeStarted))
-                })
+                completion(.success(assemble(result, transcript: transcript, segments: segments,
+                                             transcribeSeconds: transcribeSeconds,
+                                             summarizeStarted: summarizeStarted)))
             }
+        }
+    }
+
+    /// 요약 결과를 `Result` 로 엮는다. **실패해도 `.failure` 로 돌려주지 않는다** —
+    /// 받아 적은 것을 본문에 담아 그대로 저장되게 한다.
+    private static func assemble(_ result: Swift.Result<String, Error>,
+                                 transcript: String, segments: [Whisper.Segment],
+                                 transcribeSeconds: Double, summarizeStarted: Date) -> Result {
+        let elapsed = Date().timeIntervalSince(summarizeStarted)
+        switch result {
+        case .success(let notes):
+            return Result(transcript: transcript, notes: notes, segments: segments,
+                          transcribeSeconds: transcribeSeconds, summarizeSeconds: elapsed)
+        case .failure(let error):
+            Log.write("요약 실패 — 받아 적은 원문으로 저장한다: \(error.localizedDescription)")
+            return Result(transcript: transcript,
+                          notes: transcriptOnlyNotes(transcript, error: error),
+                          segments: segments,
+                          transcribeSeconds: transcribeSeconds, summarizeSeconds: elapsed,
+                          summaryFailed: error)
         }
     }
 
@@ -166,6 +211,7 @@ enum MeetingNotes {
     static func makeFromTracks(mic: URL, system: URL?, recordedAt: Date,
                                cancel: CancelToken? = nil,
                                onProgress: @escaping (Progress) -> Void,
+                               onTranscript: ((String, [Whisper.Segment]) -> Void)? = nil,
                                completion: @escaping (Swift.Result<Result, Error>) -> Void) {
         onProgress(Progress(stage: .transcribing, fraction: 0))
         let started = Date()
@@ -197,16 +243,18 @@ enum MeetingNotes {
                     completion(.failure(Whisper.Failure.cancelled))
                     return
                 }
+                // ⚠️ 화면에 보여 줄 구간은 **시각순으로 엮고 화자를 붙여** 둔다.
+                //    전에는 `micSegments + systemSegments` 로 이어 붙여서, 원문 탭이
+                //    내 말 전부 → 상대 말 전부 순서로 나오고 시각이 중간에 0 으로 되돌아갔다.
+                //    에코도 안 걸러져서 상대 말이 두 번 보였다.
+                let shown = EchoFilter.labelled(mic: micSegments, system: systemSegments)
+                onTranscript?(merged, shown)
                 onProgress(Progress(stage: .summarizing, fraction: nil))
                 let summarizeStarted = Date()
                 summarize(merged, speakersKnown: hasSystem) { result in
-                    completion(result.map {
-                        Result(transcript: merged,
-                               notes: $0,
-                               segments: micSegments + systemSegments,
-                               transcribeSeconds: transcribeSeconds,
-                               summarizeSeconds: Date().timeIntervalSince(summarizeStarted))
-                    })
+                    completion(.success(assemble(result, transcript: merged, segments: shown,
+                                                 transcribeSeconds: transcribeSeconds,
+                                                 summarizeStarted: summarizeStarted)))
                 }
             } catch {
                 completion(.failure(error))
@@ -229,6 +277,10 @@ enum MeetingNotes {
         let empty = "(?:\\(?(?:없음|미정|없습니다|해당\\s*없음|TBD|N/?A|-)\\)?)"
         let label = "(?:담당자|담당|마감|기한|일정)"
         let patterns = [
+            // "— (담당자 없음)" 처럼 이름표까지 통째로 괄호에 든 꼴. 2026-09-29 에 모델이
+            // 이 모양을 새로 만들어 내서 아래 규칙들을 모두 빠져나갔다.
+            "\\s*[—–-]\\s*\\(\\s*\(label)\\s*(?:없음|미정|미상|불명)\\s*\\)\\s*$",
+            "\\s*[,·]\\s*\\(\\s*\(label)\\s*(?:없음|미정|미상|불명)\\s*\\)\\s*$",
             // "— 담당자: (없음), 마감: (없음)" 처럼 꼬리 전체가 빈 칸뿐이면 꼬리째 지운다
             "\\s*[—–-]\\s*(?:\(label)\\s*[:：]?\\s*\(empty)\\s*[,·]?\\s*)+$",
             // "…, 마감: 미정" 처럼 뒤쪽 하나만 비었으면 그것만 지운다
@@ -249,13 +301,79 @@ enum MeetingNotes {
     /// ⚠️ 받아쓰기 쪽 Gemini 호출(`GeminiClient`)을 그대로 쓰지 않는다. 거기는 출력이 2048 토큰으로
     ///    묶여 있고 `PolishStyle` 에 매여 있어서, 회의록을 넣으면 중간에 잘린다.
     ///    호출 코드가 두 벌이 된 셈인데, 받아쓰기 쪽을 건드려 짧은 말 처리를 흔드는 것보다 낫다고 봤다.
+    /// 이미 받아 적어 둔 글로 요약만 다시 부른다. 요약이 503 으로 죽어도 받아쓰기를
+    /// 4분 30초 다시 돌리지 않게 하려고 연다. `--summarize-transcript` 와 "다시 요약"이 쓴다.
+    static func summarizeOnly(_ transcript: String, speakersKnown: Bool = false,
+                              completion: @escaping (Swift.Result<String, Error>) -> Void) {
+        summarize(transcript, speakersKnown: speakersKnown, completion: completion)
+    }
+
+    /// 저녁이면 무료 티어가 503 을 자주 뱉는다(CLAUDE.md 의 실측). 한 번 튕겼다고 포기하면
+    /// 몇 분 걸려 받아 적은 것이 쓸모없어진다. 뒤로 물러서며 다시 걸고, 그래도 안 되면 모델을 바꾼다.
+    ///
+    /// ⚠️ 무료 키는 **모델당 하루 20회**라 보조 모델도 금방 바닥난다. 그래서 모델을 바꾸기 전에
+    ///    같은 모델로 먼저 기다렸다 다시 건다 — 503 은 대개 잠깐이다.
+    private static let retryDelays: [Double] = [2, 6, 15]
+
     private static func summarize(_ transcript: String, speakersKnown: Bool = false,
                                   completion: @escaping (Swift.Result<String, Error>) -> Void) {
+        // 고른 모델을 먼저, 그다음 보조 모델을 겹치지 않게. 무료 키는 모델당 하루 20회라
+        // 순서가 중요하다 — 늘 쓰던 것이 바닥났을 때 다른 것이 받아 준다.
+        var models = [Prefs.geminiModel]
+        for m in Prefs.geminiFallbacks where !models.contains(m) { models.append(m) }
+        attempt(transcript, speakersKnown: speakersKnown, models: models, modelIndex: 0, tryIndex: 0,
+                completion: completion)
+    }
+
+    /// 같은 모델로 `retryDelays` 만큼 물러서며 다시 걸고, 다 쓰면 다음 모델로 넘어간다.
+    private static func attempt(_ transcript: String, speakersKnown: Bool,
+                                models: [String], modelIndex: Int, tryIndex: Int,
+                                completion: @escaping (Swift.Result<String, Error>) -> Void) {
+        let model = models[min(modelIndex, models.count - 1)]
+        callGemini(transcript, speakersKnown: speakersKnown, model: model) { result in
+            switch result {
+            case .success:
+                if modelIndex > 0 || tryIndex > 0 { Log.write("요약 성공 — \(model), \(tryIndex + 1)번째 시도") }
+                completion(result)
+            case .failure(let error):
+                guard worthRetrying(error) else { completion(result); return }
+                if tryIndex < retryDelays.count {
+                    let wait = retryDelays[tryIndex]
+                    Log.write("요약 재시도 — \(model), \(wait)초 뒤 (\(error.localizedDescription.prefix(60)))")
+                    DispatchQueue.global().asyncAfter(deadline: .now() + wait) {
+                        attempt(transcript, speakersKnown: speakersKnown, models: models,
+                                modelIndex: modelIndex, tryIndex: tryIndex + 1, completion: completion)
+                    }
+                    return
+                }
+                if modelIndex + 1 < models.count {
+                    Log.write("요약 모델 바꿈 — \(model) → \(models[modelIndex + 1])")
+                    attempt(transcript, speakersKnown: speakersKnown, models: models,
+                            modelIndex: modelIndex + 1, tryIndex: 0, completion: completion)
+                    return
+                }
+                completion(result)
+            }
+        }
+    }
+
+    /// 다시 걸어 볼 값어치가 있는 실패인가. 키가 없거나 글이 비었으면 몇 번을 걸어도 같다.
+    private static func worthRetrying(_ error: Error) -> Bool {
+        if case Failure.badResponse(let code, _) = error {
+            return code == 429 || code == 500 || code == 502 || code == 503 || code == 504
+        }
+        if case Failure.noAPIKey = error { return false }
+        if case Failure.emptyAnswer = error { return false }
+        // 시간 초과·연결 끊김 같은 네트워크 오류는 다시 걸어 본다.
+        return (error as NSError).domain == NSURLErrorDomain
+    }
+
+    private static func callGemini(_ transcript: String, speakersKnown: Bool, model: String,
+                                   completion: @escaping (Swift.Result<String, Error>) -> Void) {
         guard let key = KeychainStore.read(.gemini), !key.isEmpty else {
             completion(.failure(Failure.noAPIKey))
             return
         }
-        let model = Prefs.geminiModel
         guard let url = URL(string:
             "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent") else {
             completion(.failure(Failure.badResponse(0, "주소를 만들지 못했습니다.")))
