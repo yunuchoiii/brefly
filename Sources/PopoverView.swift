@@ -163,8 +163,8 @@ struct HistoryRow: View {
             Button(action: copy) {
                 Image(systemName: "doc.on.doc").font(.system(size: 12)).foregroundColor(.text4)
                     .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
             }
-            .contentShape(Rectangle())
             .buttonStyle(.plain)
             .help("요약 복사")
         }
@@ -236,8 +236,8 @@ struct RecordingView: View {
                         .foregroundColor(.darkText)
                         .frame(width: 56, height: 42)
                         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.darkLine, lineWidth: 1))
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
                 .buttonStyle(.plain)
             }
             .padding(16)
@@ -333,8 +333,8 @@ struct DoneView: View {
                             Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold))
                             Text("최근 요약")
                         }
+                        .contentShape(Rectangle())
                     }
-                    .contentShape(Rectangle())
                     .buttonStyle(.plain).font(.system(size: 12)).foregroundColor(.text3)
                     Spacer()
                     Text(Format.relative(record.date)).font(.system(size: 11)).foregroundColor(.text4)
@@ -404,8 +404,8 @@ struct DoneView: View {
                         Image(systemName: "chevron.left").font(.system(size: 10, weight: .semibold))
                         Text("처음으로")
                     }
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
                 .buttonStyle(.plain)
                 Spacer()
                 Button("새 녹음", action: model.actions.startRecording).buttonStyle(.plain)
@@ -475,8 +475,8 @@ struct HistoryView: View {
                         Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold))
                         Text("뒤로")
                     }
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
                 .buttonStyle(.plain).font(.system(size: 12)).foregroundColor(.text3)
                 Spacer()
                 Text("요약 기록 \(model.history.count)").font(.system(size: 13, weight: .semibold)).foregroundColor(.ink)
@@ -772,8 +772,8 @@ struct MeetingRecordingView: View {
                         .font(.system(size: 13, weight: .semibold)).foregroundColor(.darkText)
                         .frame(width: 66).frame(height: 42)
                         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.darkLine, lineWidth: 1))
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 16)

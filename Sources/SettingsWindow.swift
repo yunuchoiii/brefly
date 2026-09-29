@@ -752,8 +752,8 @@ struct InkToggle: View {
                 Circle().fill(isOn ? Color.onPrimary : Color.white).frame(width: 18, height: 18).padding(2)
                     .shadow(color: .black.opacity(0.15), radius: 1, y: 0.5)
             }
+            .contentShape(Rectangle())
         }
-        .contentShape(Rectangle())
         .buttonStyle(.plain)
     }
 }
@@ -1004,8 +1004,8 @@ struct UsageContextSection: View {
                         Text("직접 추가 — 내 소개, 자주 쓰는 용어")
                     }
                     .font(.system(size: 12)).foregroundColor(.text2)
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
                 .buttonStyle(.plain)
 
                 if showExtras {

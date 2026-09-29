@@ -1841,12 +1841,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         //    팝오버가 닫히지 않게 붙잡아 두고 묻는다.
         let alert = NSAlert()
         let minutes = Int(Date().timeIntervalSince(meetingRecordingStartedAt ?? Date())) / 60
-        alert.messageText = "녹음을 버릴까요?"
+        alert.messageText = "녹음을 취소할까요?"
         alert.informativeText = minutes > 0
             ? "지금까지 녹음한 \(minutes)분이 사라집니다. 되돌릴 수 없습니다."
             : "지금까지 녹음한 것이 사라집니다. 되돌릴 수 없습니다."
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "녹음 버리기")
+        alert.addButton(withTitle: "녹음 취소")
         alert.addButton(withTitle: "계속 녹음")
         keepPopoverOpen = true
         applyPopoverStickiness(for: model.phase)
