@@ -58,6 +58,9 @@ final class AppModel: ObservableObject {
         var startRecording: () -> Void = {}
         var finishRecording: () -> Void = {}
         var cancelRecording: () -> Void = {}
+        /// 녹음 파일을 골라 회의록을 만든다. 오른쪽 클릭 메뉴에도 같은 항목이 있지만,
+        /// 사람들이 실제로 보는 것은 이 팝오버라 여기가 진짜 입구다.
+        var makeMeetingNotes: () -> Void = {}
         var openSettings: () -> Void = {}
         var quit: () -> Void = {}
         var copy: (SummaryRecord) -> Void = { _ in }

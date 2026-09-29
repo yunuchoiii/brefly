@@ -110,8 +110,9 @@ struct IdleView: View {
 
             HairLine()
 
-            HStack {
+            HStack(spacing: 14) {
                 Button("설정", action: model.actions.openSettings).buttonStyle(.plain)
+                Button("회의록", action: model.actions.makeMeetingNotes).buttonStyle(.plain)
                 Spacer()
                 Button("종료", action: model.actions.quit).buttonStyle(.plain)
             }

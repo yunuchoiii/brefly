@@ -78,18 +78,18 @@ if let i = CommandLine.arguments.firstIndex(of: "--prompt"), i + 1 < CommandLine
 if let i = CommandLine.arguments.firstIndex(of: "--render-menubar"), i + 1 < CommandLine.arguments.count {
     let dir = URL(fileURLWithPath: CommandLine.arguments[i + 1], isDirectory: true)
     try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    let states: [(name: String, progress: Double?, color: NSColor?)] = [
+    let states: [(name: String, progress: Double?, kind: AppDelegate.RingKind?)] = [
         ("1-평소",        nil,  nil),
-        ("2-모델받는중-38", 0.38, Theme.coral),
-        ("3-받아쓰는중-42", 0.42, Theme.coral),
-        ("4-요약중-모름",   nil,  Theme.coral),
-        ("5-완료",        1,    Theme.done),
+        ("2-0퍼센트",     0,    .working),
+        ("3-받아쓰는중-42", 0.42, .working),
+        ("4-요약중-모름",   nil,  .working),
+        ("5-완료",        1,    .done),
     ]
     let side: CGFloat = 72
     for state in states {
         for (label, dark) in [("밝은", false), ("어두운", true)] {
-            let icon: NSImage = state.color.map {
-                Logo.menuBarIcon(progress: state.progress, color: $0, dark: dark)
+            let icon: NSImage = state.kind.map {
+                Logo.menuBarIcon(progress: state.progress, color: $0.color(dark: dark), dark: dark)
             } ?? Logo.mark(size: 18, wave: dark ? .white : .black, dot: dark ? .white : .black)
             let canvas = NSImage(size: NSSize(width: side, height: side))
             canvas.lockFocus()
@@ -1044,6 +1044,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func wireModelActions() {
         model.actions.startRecording = { [weak self] in self?.startRecording() }
+        model.actions.makeMeetingNotes = { [weak self] in
+            self?.popover.performClose(nil)
+            self?.summarizeRecording()
+        }
         model.actions.finishRecording = { [weak self] in
             guard let self, self.recorder.isRunning else { return }
             self.stopAndPolish()
@@ -1151,9 +1155,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // 지금 무엇이 돌고 있는지 알려 주는 쪽이 더 쓸모 있다.
             if let ring = self.meetingRing {
                 let label = ring.fraction.map { " \(Int($0 * 100))%" } ?? ""
+                let dark = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
                 button.attributedTitle = NSAttributedString(
-                    string: label, attributes: [.font: NSFont.systemFont(ofSize: 10, weight: .semibold),
-                                                .foregroundColor: ring.color])
+                    string: label, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .bold),
+                                                .foregroundColor: ring.kind.color(dark: dark)])
                 return
             }
             switch self.state {
@@ -1493,7 +1498,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     /// 메뉴바 아이콘의 점 자리에 그릴 진행 고리. nil 이면 평소 모양(템플릿 아이콘)으로 돌아간다.
     /// 회의록은 1~2분이 걸리는데 메뉴를 닫으면 표시가 없어서 멈춘 줄 안다 — 그래서 아이콘에 남긴다.
-    private var meetingRing: (fraction: Double?, color: NSColor)? {
+    /// 고리가 무엇을 뜻하는지. 색은 메뉴바 밝기에 맞춰 그릴 때 정한다 —
+    /// ⚠️ 코랄로 그렸더니 메뉴바에서 묻혔다(2026-09-29). 파형처럼 메뉴바를 따라가야 한다.
+    enum RingKind {
+        case working   // 밝은 메뉴바면 어둡게, 어두운 메뉴바면 희게
+        case done      // 끝났다는 신호라 밝기와 무관하게 초록
+
+        func color(dark: Bool) -> NSColor {
+            switch self {
+            case .working: return dark ? .white : NSColor(white: 0.15, alpha: 1)
+            case .done:    return Theme.done
+            }
+        }
+    }
+
+    private var meetingRing: (fraction: Double?, kind: RingKind)? {
         didSet {
             applyMenuBarIcon()
             updateStatusTitle()
@@ -1501,22 +1520,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
     /// 끝난 뒤 초록 점을 잠깐 보여 주고 원래대로 돌리는 타이머.
     private var doneRingTimer: Timer?
+    /// 고리를 돌리는 타이머. 가만히 있으면 18pt 에서 눈에 안 띈다.
+    private var ringSpinTimer: Timer?
+    private var ringAngle: Double = 0
 
     private func applyMenuBarIcon() {
         guard let button = statusItem?.button else { return }
         guard let ring = meetingRing else {
+            ringSpinTimer?.invalidate()
+            ringSpinTimer = nil
             button.image = Logo.menuBarIcon()
             return
         }
+        // 다 끝난 초록 고리는 돌리지 않는다. 끝났는데 도는 건 거짓말이다.
+        let spinning: Bool
+        if case .working = ring.kind { spinning = true } else { spinning = false }
+        if spinning, ringSpinTimer == nil {
+            ringSpinTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 20, repeats: true) { [weak self] _ in
+                guard let self, self.meetingRing != nil else { return }
+                self.ringAngle = (self.ringAngle + 9).truncatingRemainder(dividingBy: 360)
+                self.applyMenuBarIcon()
+            }
+        } else if !spinning {
+            ringSpinTimer?.invalidate()
+            ringSpinTimer = nil
+            ringAngle = 0
+        }
         // 메뉴바는 배경화면에 따라 어두울 수 있다. 앱 모드가 아니라 버튼이 실제로 쓰는 모양새를 본다.
         let dark = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        button.image = Logo.menuBarIcon(progress: ring.fraction, color: ring.color, dark: dark)
+        button.image = Logo.menuBarIcon(progress: ring.fraction, color: ring.kind.color(dark: dark),
+                                        dark: dark, rotation: ringAngle)
     }
 
     /// 다 됐다는 표시를 5초만 보여 준다. 계속 두면 다음에 볼 때 무슨 뜻인지 모른다.
     private func flashDoneRing() {
         doneRingTimer?.invalidate()
-        meetingRing = (1, Theme.done)
+        meetingRing = (1, .done)
         doneRingTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
             self?.meetingRing = nil
         }
@@ -1559,7 +1598,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         downloader.download(onProgress: { [weak self] progress in
             guard let self else { return }
             DispatchQueue.main.async {
-                self.meetingRing = (progress.fraction, Theme.coral)
+                self.meetingRing = (progress.fraction, .working)
                 self.setState(self.state, message: "모델 내려받는 중 \(Int(progress.fraction * 100))% (\(progress.text))")
             }
         }, completion: { [weak self] result in
@@ -1583,7 +1622,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         MeetingNotes.make(audio: url, onProgress: { [weak self] progress in
             guard let self else { return }
             DispatchQueue.main.async {
-                self.meetingRing = (progress.fraction, Theme.coral)
+                self.meetingRing = (progress.fraction, .working)
                 self.setState(self.state, message: "회의록: \(progress.text)")
             }
         }, completion: { [weak self] result in

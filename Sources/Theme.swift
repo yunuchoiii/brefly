@@ -169,7 +169,10 @@ enum Logo {
     ///     (요약 단계는 %를 알 수 없다).
     ///   - color: 고리 색. 처리 중은 코랄, 끝나면 초록.
     ///   - dark: 메뉴바가 어두운지. 파형 색을 정하는 데 쓴다.
-    static func menuBarIcon(progress: Double?, color: NSColor, dark: Bool) -> NSImage {
+    /// - Parameter rotation: 고리를 돌린 각도. 가만히 있는 고리는 18pt 에서 눈에 안 띈다
+    ///   ("로딩스피너가 너무 작고 안보여", 2026-09-29). 돌면 움직임으로 먼저 눈에 들어온다.
+    static func menuBarIcon(progress: Double?, color: NSColor, dark: Bool,
+                            rotation: Double = 0) -> NSImage {
         let size: CGFloat = 18
         let image = NSImage(size: NSSize(width: size, height: size), flipped: true) { _ in
             let s = size / viewBox
@@ -178,12 +181,13 @@ enum Logo {
             wavePath.stroke()
 
             let center = CGPoint(x: dotCenter.x * s, y: dotCenter.y * s)
-            // 고리는 점보다 조금 크게 그린다. 점 크기 그대로면 선이 뭉개진다.
-            let radius = dotRadius * s * 1.45
-            let width = max(1.6, dotRadius * s * 0.9)
+            // ⚠️ 메뉴바 아이콘은 18pt 다. 처음엔 점 크기에 맞춰 가늘게 그렸더니 "안 보인다"는 말을 들었다.
+            //    점보다 확실히 크고 굵게 그려야 읽힌다.
+            let radius = dotRadius * s * 1.7
+            let width = max(2.2, dotRadius * s * 1.15)
 
-            // 바탕 고리 — 얼마나 남았는지 보이게 흐리게 깐다.
-            color.withAlphaComponent(0.28).setStroke()
+            // 바탕 고리 — 얼마나 남았는지 보이게 깐다. 너무 흐리면 0% 일 때 아무것도 없어 보인다.
+            color.withAlphaComponent(0.4).setStroke()
             let track = NSBezierPath()
             track.appendArc(withCenter: center, radius: radius, startAngle: 0, endAngle: 360)
             track.lineWidth = width
@@ -192,9 +196,11 @@ enum Logo {
             // 찬 만큼 — 12시에서 시계 방향으로.
             color.setStroke()
             let filled = NSBezierPath()
-            let sweep = (progress.map { min(max($0, 0), 1) } ?? 0.75) * 360
+            // ⚠️ 0% 를 그대로 그리면 채워진 곳이 없어 멈춘 것처럼 보인다. 최소한 한 조각은 채운다.
+            let sweep = (progress.map { min(max($0, 0.08), 1) } ?? 0.75) * 360
+            let start = 90 - rotation
             filled.appendArc(withCenter: center, radius: radius,
-                             startAngle: 90, endAngle: 90 - sweep, clockwise: true)
+                             startAngle: start, endAngle: start - sweep, clockwise: true)
             filled.lineWidth = width
             filled.lineCapStyle = .round
             filled.stroke()
