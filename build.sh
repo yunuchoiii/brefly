@@ -92,6 +92,7 @@ swiftc \
   -framework SwiftUI \
   -framework AVFoundation \
   -framework Speech \
+  -framework ScreenCaptureKit \
   -framework Carbon \
   -framework ApplicationServices \
   -framework Security \

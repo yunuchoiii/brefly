@@ -72,6 +72,43 @@ if let i = CommandLine.arguments.firstIndex(of: "--prompt"), i + 1 < CommandLine
     exit(0)
 }
 
+// 진단용: 스피커로 나가는 소리를 잡아 WAV 로 남긴다. 화상회의 상대방 목소리가 실제로 들어오는지 본다.
+if let i = CommandLine.arguments.firstIndex(of: "--capture-system-audio"), i + 2 < CommandLine.arguments.count {
+    let seconds = Double(CommandLine.arguments[i + 1]) ?? 10
+    let out = URL(fileURLWithPath: CommandLine.arguments[i + 2])
+    let done = DispatchSemaphore(value: 0)
+    Task {
+        let recorder = SystemAudioRecorder()
+        var file: AVAudioFile?
+        recorder.onBuffer = { buffer in
+            if file == nil {
+                file = try? AVAudioFile(forWriting: out, settings: buffer.format.settings,
+                                        commonFormat: .pcmFormatFloat32, interleaved: false)
+            }
+            try? file?.write(from: buffer)
+        }
+        do {
+            try await recorder.start()
+            print("\(seconds)초 동안 잡습니다 — 지금 소리를 내 보세요")
+            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            await recorder.stop()
+            print("버퍼 \(recorder.buffers)개, 최대 진폭 \(String(format: "%.4f", recorder.peak))")
+            if recorder.buffers == 0 {
+                print("FAIL 소리가 하나도 안 들어왔습니다 — 화면 기록 권한을 확인하세요")
+            } else if recorder.peak < 0.0001 {
+                print("FAIL 무음만 들어왔습니다 — 권한은 났지만 소리가 안 잡힙니다")
+            } else {
+                print("OK \(out.path)")
+            }
+        } catch {
+            print("FAIL \(error.localizedDescription)")
+        }
+        done.signal()
+    }
+    _ = done.wait(timeout: .now() + seconds + 60)
+    exit(0)
+}
+
 // 진단용: 소리 파일만 받아쓴다. --from 초 --for 초 로 구간을, --on-device 로 온디바이스 인식을 고른다.
 if let i = CommandLine.arguments.firstIndex(of: "--transcribe"), i + 1 < CommandLine.arguments.count {
     func number(_ flag: String, _ fallback: Double) -> Double {
