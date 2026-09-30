@@ -11,6 +11,12 @@ struct MeetingDocument {
     let duration: Double?
     var notes: String
     let segments: [Whisper.Segment]
+    /// 받아 적은 원문. "다시 요약"이 이걸 다시 모델에 넘긴다 — 받아쓰기를 다시 돌리지 않는다.
+    var transcript: String = ""
+    /// 화자를 아는 녹음인지(화상 회의). 다시 요약할 때 프롬프트가 달라진다.
+    var speakersKnown: Bool = false
+    /// 요약이 실패한 채로 저장됐으면 그 까닭. 있으면 창 위에 띠와 '다시 요약'이 뜬다.
+    var summaryFailed: String? = nil
 
     var dateText: String {
         let f = DateFormatter()
@@ -69,12 +75,18 @@ struct MeetingResultView: View {
     @State private var editing = false
     @State private var draft = ""
     @State private var toast: String?
+    @State private var retrying = false
+    /// 모델이 마지막으로 낸 글. 사용자가 고쳤는지 가리는 기준이다.
+    @State private var lastSummary = ""
+    /// 다시 요약하기 직전의 글. 새 요약이 더 나쁠 수도 있어서 한 번은 되돌릴 수 있게 둔다.
+    @State private var undoTarget: String?
 
     enum Tab { case notes, transcript }
 
     var body: some View {
         VStack(spacing: 0) {
             header
+            if let failure = document.summaryFailed { HairLine(); retryBanner(failure) }
             HairLine()
             tabs
             HairLine()
@@ -88,12 +100,28 @@ struct MeetingResultView: View {
             .background(Color.paperSoft)
             if let toast {
                 HairLine()
-                Text(toast).font(.system(size: 11.5)).foregroundColor(.text3)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 20).padding(.vertical, 8)
+                HStack(spacing: 10) {
+                    Text(toast).font(.system(size: 11.5)).foregroundColor(.text3)
+                    Spacer(minLength: 0)
+                    if let previous = undoTarget {
+                        Button("되돌리기") {
+                            document.notes = previous
+                            lastSummary = previous
+                            try? previous.write(to: document.notesFile, atomically: true, encoding: .utf8)
+                            MeetingHistoryStore.updateTodos(notesPath: document.notesFile.path,
+                                                            count: MeetingHistoryStore.countTodos(in: previous))
+                            undoTarget = nil
+                            flash("이전 요약으로 되돌렸습니다.")
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11.5, weight: .semibold)).foregroundColor(.coral)
+                    }
+                }
+                .padding(.horizontal, 20).padding(.vertical, 8)
             }
         }
         .background(Color.paper)
+        .onAppear { if lastSummary.isEmpty { lastSummary = document.notes } }
     }
 
     private var header: some View {
@@ -105,6 +133,13 @@ struct MeetingResultView: View {
             }
             Spacer()
             HStack(spacing: 8) {
+                // 실패했을 때만이 아니라 **마음에 안 들 때도** 다시 뽑을 수 있어야 한다.
+                // 받아쓰기는 다시 돌지 않으므로 48분 회의라도 몇 초다.
+                // 고치는 중에는 숨긴다 — 쓰던 글을 모델 결과로 덮어쓰면 그게 사고다.
+                if !editing, !document.transcript.isEmpty, document.summaryFailed == nil {
+                    OutlineButton(retrying ? "요약하는 중…" : "다시 요약", wide: false) { askRetry() }
+                        .disabled(retrying)
+                }
                 OutlineButton(editing ? "저장" : "고치기", wide: false) { toggleEditing() }
                 OutlineButton("Finder에서 보기", wide: false) {
                     NSWorkspace.shared.activateFileViewerSelecting([document.notesFile])
@@ -117,6 +152,66 @@ struct MeetingResultView: View {
             }
         }
         .padding(.horizontal, 20).padding(.vertical, 16)
+    }
+
+    /// 요약만 실패했을 때 뜨는 띠. 받아 적은 것은 이미 안전하다는 걸 먼저 말하고,
+    /// 몇 초면 되는 재시도를 바로 옆에 둔다.
+    private func retryBanner(_ failure: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 12)).foregroundColor(.coral)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("요약만 실패했습니다. 받아 적은 원문은 그대로 있습니다.")
+                    .font(.system(size: 12, weight: .semibold)).foregroundColor(.ink)
+                Text(failure).font(.system(size: 11)).foregroundColor(.text3)
+                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+            OutlineButton(retrying ? "요약하는 중…" : "다시 요약", wide: false) { retrySummary() }
+                .disabled(retrying)
+        }
+        .padding(.horizontal, 20).padding(.vertical, 12)
+        .background(Color.coral.opacity(0.06))
+    }
+
+    /// 고쳐 둔 글이 있으면 먼저 묻는다. 모델 결과로 덮어쓰면 사용자가 쓴 것이 사라진다.
+    private func askRetry() {
+        guard document.notes != lastSummary else { retrySummary(); return }
+        let alert = NSAlert()
+        alert.messageText = "다시 요약할까요?"
+        alert.informativeText = "지금 회의록을 모델이 새로 쓴 것으로 바꿉니다. "
+            + "고쳐 두신 내용은 사라집니다. 받아 적은 원문은 그대로입니다."
+        alert.addButton(withTitle: "다시 요약")
+        alert.addButton(withTitle: "취소")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        retrySummary()
+    }
+
+    /// 받아쓰기는 건드리지 않는다. 요약만 다시 부른다 — 48분 녹음이라도 몇 초다.
+    private func retrySummary() {
+        guard !retrying, !document.transcript.isEmpty else { return }
+        retrying = true
+        MeetingNotes.summarizeOnly(document.transcript, speakersKnown: document.speakersKnown) { result in
+            DispatchQueue.main.async {
+                retrying = false
+                switch result {
+                case .success(let notes):
+                    let previous = document.notes
+                    document.notes = notes
+                    document.summaryFailed = nil
+                    lastSummary = notes
+                    try? notes.write(to: document.notesFile, atomically: true, encoding: .utf8)
+                    // 목록의 "할 일 n개"가 옛 숫자로 남으면 안 된다.
+                    MeetingHistoryStore.updateTodos(notesPath: document.notesFile.path,
+                                                    count: MeetingHistoryStore.countTodos(in: notes))
+                    undoTarget = previous
+                    flash("요약을 다시 만들었습니다. 마음에 안 들면 되돌릴 수 있습니다.")
+                case .failure(let error):
+                    document.summaryFailed = error.localizedDescription
+                    flash("또 실패했습니다. 원문은 그대로 있습니다.")
+                }
+            }
+        }
     }
 
     private var tabs: some View {
@@ -185,14 +280,23 @@ struct MeetingResultView: View {
                 //    나중에 "참석자" 목록이 같은 자리에 들어가므로 화면을 갈아엎지 않는다.
                 VStack(alignment: .leading, spacing: 6) {
                     Text("참석자").font(.system(size: 11, weight: .bold)).foregroundColor(.text3)
-                    Text("누가 말했는지는 아직 구분하지 않습니다. 다음 버전에서 화자를 나누고 이름을 붙일 수 있습니다.")
-                        .font(.system(size: 11)).foregroundColor(.text4)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .overlay(RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(Color.coral.opacity(0.35),
-                                          style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                    if document.speakersKnown {
+                        // 화상 회의는 트랙이 갈려 있어 내 쪽과 상대 쪽은 안다. 상대가 몇 명인지는 모른다.
+                        infoRow("나", "이 맥의 마이크")
+                        infoRow("상대", "스피커로 나온 소리")
+                        Text("상대가 여러 명이면 모두 '상대'로 묶입니다.")
+                            .font(.system(size: 11)).foregroundColor(.text4)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text("누가 말했는지는 아직 구분하지 않습니다. 다음 버전에서 화자를 나누고 이름을 붙일 수 있습니다.")
+                            .font(.system(size: 11)).foregroundColor(.text4)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .overlay(RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(Color.coral.opacity(0.35),
+                                              style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                    }
                 }
                 Spacer(minLength: 0)
             }
@@ -215,10 +319,19 @@ struct MeetingResultView: View {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(document.segments.enumerated()), id: \.offset) { _, segment in
                     HStack(alignment: .top, spacing: 12) {
-                        // ⚠️ 시간 칸을 넉넉히 잡는다. 화자 구분이 들어오면 여기에 이름이 들어간다.
                         Text(timeText(segment.start))
                             .font(.system(size: 11, design: .monospaced)).foregroundColor(.text3)
-                            .frame(width: 74, alignment: .leading)
+                            .frame(width: 44, alignment: .leading)
+                        // 화상 회의는 트랙이 갈려 있어 누가 말했는지 안다. 대면은 비워 둔다.
+                        if let speaker = segment.speaker {
+                            Text(speaker)
+                                .font(.system(size: 11, weight: .semibold)).foregroundColor(.ink)
+                                .padding(.horizontal, 7).padding(.vertical, 1)
+                                .background(speaker == "나" ? Color.paperSoft : Color.paper)
+                                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.line, lineWidth: 1))
+                                .cornerRadius(5)
+                                .frame(width: 42, alignment: .leading)
+                        }
                         Text(segment.text).font(.system(size: 12.5)).foregroundColor(.ink)
                             .fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 0)

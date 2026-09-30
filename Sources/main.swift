@@ -143,6 +143,29 @@ if let i = CommandLine.arguments.firstIndex(of: "--render-menubar"), i + 1 < Com
     exit(0)
 }
 
+// 진단용: 이미 받아 적어 둔 글(.txt)로 요약만 다시 돌린다.
+// 받아쓰기는 48분에 4분 30초가 걸리는데 요약은 몇 초다. 요약이 503 으로 죽었다고
+// 받아쓰기부터 다시 하게 만들면 안 된다.
+if let i = CommandLine.arguments.firstIndex(of: "--summarize-transcript"), i + 1 < CommandLine.arguments.count {
+    let file = URL(fileURLWithPath: CommandLine.arguments[i + 1])
+    guard let text = try? String(contentsOf: file, encoding: .utf8) else {
+        print("FAIL 파일을 읽지 못했습니다: \(file.path)")
+        exit(1)
+    }
+    let known = CommandLine.arguments.contains("--speakers-known")
+    let done = DispatchSemaphore(value: 0)
+    print("원문 \(text.count)자로 요약 요청 (화자 앎: \(known))")
+    MeetingNotes.summarizeOnly(text, speakersKnown: known) { result in
+        switch result {
+        case .success(let notes): print("--- 회의록 ---"); print(notes)
+        case .failure(let error): print("FAIL \(error.localizedDescription)")
+        }
+        done.signal()
+    }
+    _ = done.wait(timeout: .now() + 600)
+    exit(0)
+}
+
 // 진단용: 두 트랙을 받아쓰고 에코를 거른 결과만 본다. 요약은 안 부른다 —
 // 에코가 걸러졌는지만 보고 싶은데 요약까지 가면 길이 제한에 막혀 아무것도 못 본다.
 if let i = CommandLine.arguments.firstIndex(of: "--echo-check"), i + 1 < CommandLine.arguments.count {
@@ -175,7 +198,13 @@ if let i = CommandLine.arguments.firstIndex(of: "--meeting-tracks"), i + 1 < Com
     let hasSystem = FileManager.default.fileExists(atPath: system.path)
     let done = DispatchSemaphore(value: 0)
     MeetingNotes.makeFromTracks(mic: mic, system: hasSystem ? system : nil, recordedAt: Date(),
-                                onProgress: { print("  \($0.text)") }) { result in
+                                onProgress: { print("  \($0.text)") },
+                                onTranscript: { text, segments in
+        // 앱과 같은 자리에 같은 이름으로 떨군다. 이 길도 실제로 도는지 여기서 확인한다.
+        let target = folder.appendingPathComponent("받아쓴 원문.txt")
+        try? text.write(to: target, atomically: true, encoding: .utf8)
+        print("  [원문 저장] \(target.path) — \(text.count)자, 구간 \(segments.count)개, 화자 붙은 것 \(segments.filter { $0.speaker != nil }.count)개")
+    }) { result in
         switch result {
         case .success(let notes):
             print("OK 받아쓰기 \(String(format: "%.1f", notes.transcribeSeconds))초")
@@ -1920,6 +1949,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 if case .meeting = self.model.phase { self.model.phase = .meeting(run) }
                 self.setState(self.state, message: "회의록: \(progress.text)")
             }
+        }, onTranscript: { transcript, _ in
+            Self.dropTranscript(transcript, beside: folder.appendingPathComponent("x"))
         }, completion: { [weak self] result in
             guard let self else { return }
             DispatchQueue.main.async {
@@ -2028,6 +2059,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 if case .meeting = self.model.phase { self.model.phase = .meeting(run) }
                 self.setState(self.state, message: "회의록: \(progress.text)")
             }
+        }, onTranscript: { transcript, _ in
+            Self.dropTranscript(transcript, beside: url)
         }, completion: { [weak self] result in
             guard let self else { return }
             DispatchQueue.main.async {
@@ -2049,6 +2082,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     /// 녹음 파일 옆에 둔다. 앱 안 어딘가에 숨겨 두면 사용자가 찾지 못한다.
+    /// 받아쓰기가 끝나는 **즉시** 원문을 녹음 옆에 떨군다. 요약을 부르기 전이다.
+    ///
+    /// ⚠️ 이 한 줄이 없어서 2026-09-29 에 48분 회의를 잃을 뻔했다. 요약이 503 으로 죽자
+    ///    4분 30초 걸려 받아 적은 4만 자가 메모리에서 그대로 사라졌다. 여기서 쓰고 나면
+    ///    그 뒤로 앱이 죽든 요약이 실패하든 원문은 남는다.
+    private static func dropTranscript(_ transcript: String, beside audio: URL) {
+        let target = audio.deletingLastPathComponent()
+            .appendingPathComponent("받아쓴 원문.txt")
+        do {
+            try transcript.write(to: target, atomically: true, encoding: .utf8)
+            Log.write("받아쓴 원문 저장 — \(target.path) (\(transcript.count)자)")
+        } catch {
+            // 녹음 옆에 못 쓰면 앱 폴더로 물러선다. 여기서 포기하면 잃는다.
+            let fallback = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support/Brefly/transcripts", isDirectory: true)
+            try? FileManager.default.createDirectory(at: fallback, withIntermediateDirectories: true)
+            let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+            let alt = fallback.appendingPathComponent("받아쓴 원문 \(stamp).txt")
+            try? transcript.write(to: alt, atomically: true, encoding: .utf8)
+            Log.write("받아쓴 원문을 녹음 옆에 못 써서 앱 폴더로 옮김 — \(alt.path)")
+        }
+    }
+
     /// 그 자리에 못 쓰면(읽기 전용 위치 등) 앱 폴더로 물러선다.
     private func finishMeetingNotes(_ notes: MeetingNotes.Result, source: URL,
                                     titleOverride: String? = nil) {
@@ -2071,7 +2127,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         NSPasteboard.general.setString(notes.notes, forType: .string)
         lastResult = notes.notes
         let seconds = Int(notes.transcribeSeconds + notes.summarizeSeconds)
-        setState(state, message: "회의록을 만들었습니다 (\(seconds)초). 클립보드에도 복사했습니다.")
+        if let failure = notes.summaryFailed {
+            // 받아 적은 것은 살아 있다. "실패했습니다"로만 끝내면 그걸 모른다.
+            setState(state, message: "요약만 실패했습니다 — 받아 적은 원문은 저장했습니다. 창에서 다시 요약할 수 있습니다.")
+            Log.write("회의록 — 요약 실패로 원문만 저장: \(failure.localizedDescription)")
+        } else {
+            setState(state, message: "회의록을 만들었습니다 (\(seconds)초). 클립보드에도 복사했습니다.")
+        }
         Log.write("회의록 완성 — \(target.path), 받아쓰기 \(Int(notes.transcribeSeconds))초 + 요약 \(Int(notes.summarizeSeconds))초")
         // 목록에 남긴다. 받아쓴 구간은 커서 파일로 따로 둔다.
         let id = UUID().uuidString
@@ -2095,7 +2157,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             recordedAt: (try? source.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date(),
             duration: audioSeconds.isFinite && audioSeconds > 0 ? audioSeconds : nil,
             notes: notes.notes,
-            segments: notes.segments))
+            segments: notes.segments,
+            transcript: notes.transcript,
+            speakersKnown: notes.segments.contains { $0.speaker != nil },
+            summaryFailed: notes.summaryFailed?.localizedDescription))
     }
 
     /// 팝오버를 닫았거나 그 사이 받아쓰기를 해서 회의록 화면이 덮였을 때 되돌아온다.
