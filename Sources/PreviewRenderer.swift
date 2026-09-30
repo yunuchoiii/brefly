@@ -98,6 +98,10 @@ enum PreviewRenderer {
         model.phase = .idle
         model.tab = .meeting
         snap("1f-meeting-tab")
+        // "녹음본에서 추출" 칸은 모드마다 회색이 달라진다. 어두운 쪽도 찍어야 대비를 본다 —
+        // 전에 밝은 회색 칩이 어두운 배경에서 안 보인 적이 있다.
+        write(render(PopoverRoot(model: model), dark: true),
+              to: dir.appendingPathComponent("dark-1f-meeting-tab.png"))
         model.tab = .dictation
 
         // 회의를 지금 녹음하는 중. 시스템 소리를 못 잡는 경우도 같이 본다 —

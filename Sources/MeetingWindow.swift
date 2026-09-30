@@ -132,23 +132,8 @@ struct MeetingResultView: View {
                     .font(.system(size: 11.5)).foregroundColor(.text3)
             }
             Spacer()
-            HStack(spacing: 8) {
-                // 실패했을 때만이 아니라 **마음에 안 들 때도** 다시 뽑을 수 있어야 한다.
-                // 받아쓰기는 다시 돌지 않으므로 48분 회의라도 몇 초다.
-                // 고치는 중에는 숨긴다 — 쓰던 글을 모델 결과로 덮어쓰면 그게 사고다.
-                if !editing, !document.transcript.isEmpty, document.summaryFailed == nil {
-                    OutlineButton(retrying ? "요약하는 중…" : "다시 요약", wide: false) { askRetry() }
-                        .disabled(retrying)
-                }
-                OutlineButton(editing ? "저장" : "고치기", wide: false) { toggleEditing() }
-                OutlineButton("Finder에서 보기", wide: false) {
-                    NSWorkspace.shared.activateFileViewerSelecting([document.notesFile])
-                }
-                OutlineButton("복사", wide: false) {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(document.notes, forType: .string)
-                    flash("클립보드에 복사됨")
-                }
+            OutlineButton("Finder에서 보기", wide: false) {
+                NSWorkspace.shared.activateFileViewerSelecting([document.notesFile])
             }
         }
         .padding(.horizontal, 20).padding(.vertical, 16)
@@ -214,25 +199,29 @@ struct MeetingResultView: View {
         }
     }
 
+    /// ⚠️ 바깥에 여백을 주지 않는다. 탭 두 개가 창을 정확히 반씩 나눠 갖게 두면
+    ///    좌우 여백이 저절로 같아진다. 전에는 `padding(.horizontal, 20)` 을 줬는데,
+    ///    밑줄 `Rectangle` 이 가로로 탐욕스러워 탭이 이미 반씩 차지하고 있던 터라
+    ///    왼쪽 끝과 오른쪽 끝의 여백이 어긋나 보였다.
     private var tabs: some View {
-        HStack(spacing: 18) {
+        HStack(spacing: 0) {
             tabButton("회의록", .notes)
             tabButton("받아쓴 원문", .transcript)
-            Spacer()
         }
-        .padding(.horizontal, 20).padding(.top, 10)
     }
 
     private func tabButton(_ title: String, _ value: Tab) -> some View {
         let on = tab == value
         return Button(action: { tab = value }) {
-            VStack(spacing: 6) {
+            VStack(spacing: 0) {
                 Text(title)
                     .font(.system(size: 12.5, weight: on ? .semibold : .regular))
                     .foregroundColor(on ? .ink : .text3)
-                    // ⚠️ 글자에만 눌리는 영역이 잡히면 옆의 빈 곳을 눌러도 안 바뀐다.
-                    //    위아래 여백까지 눌리게 넓힌다.
-                    .padding(.horizontal, 4).padding(.top, 4)
+                    // ⚠️ 눌리는 영역은 **버튼 안**에서만 넓힐 수 있다. 위 여백을 바깥
+                    //    `padding(.top,)` 으로 주면 글자 위쪽이 눌리지 않는다.
+                    //    위아래를 같은 값으로 버튼 안에 넣는다.
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
                 Rectangle().fill(on ? Color.coral : Color.clear).frame(height: 2)
             }
             .contentShape(Rectangle())
@@ -270,6 +259,22 @@ struct MeetingResultView: View {
     private var sidebar: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                // 회의록에만 걸리는 동작 셋. 탭 위에 있으면 원문 탭을 보면서도 회의록을
+                // 고치는 것처럼 읽힌다. 사이드바가 좁아 가로로 늘어놓으면 글자가 잘리므로 쌓는다.
+                VStack(spacing: 6) {
+                    // 실패했을 때만이 아니라 **마음에 안 들 때도** 다시 뽑을 수 있어야 한다.
+                    // 고치는 중에는 숨긴다 — 쓰던 글을 모델 결과로 덮어쓰면 그게 사고다.
+                    if !editing, !document.transcript.isEmpty, document.summaryFailed == nil {
+                        OutlineButton(retrying ? "요약하는 중…" : "다시 요약") { askRetry() }
+                            .disabled(retrying)
+                    }
+                    OutlineButton(editing ? "저장" : "직접 수정") { toggleEditing() }
+                    OutlineButton("복사") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(document.notes, forType: .string)
+                        flash("회의록을 클립보드에 복사했습니다.")
+                    }
+                }
                 VStack(alignment: .leading, spacing: 8) {
                     Text("녹음 정보").font(.system(size: 11, weight: .bold)).foregroundColor(.text3)
                     infoRow("날짜", document.dateText)

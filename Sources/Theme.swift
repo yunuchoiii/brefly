@@ -89,6 +89,9 @@ extension Color {
     static let meetingRow1 = Color(nsColor: Theme.dyn(NSColor(hex: 0x16181d), NSColor(hex: 0xf2f3f5)))
     static let meetingRow2 = Color(nsColor: Theme.dyn(NSColor(hex: 0x2a2d35), NSColor(hex: 0xdcdfe4)))
     static let meetingRow3 = Color(nsColor: Theme.dyn(NSColor(hex: 0x3a3e47), NSColor(hex: 0xc9cdd4)))
+    /// "녹음본에서 추출" 칸의 바탕. 실시간 둘(검정·남색)과 달리 **눌러서 창을 여는** 동작이라
+    /// 한 단계 물러난 회색으로 둔다. 밝은 모드는 밝은 회색, 어두운 모드는 어두운 회색.
+    static let meetingRowFile = Color(nsColor: Theme.dyn(NSColor(hex: 0xe8eaee), NSColor(hex: 0x33373f)))
     static let onMeetingRow = Color(nsColor: Theme.dyn(NSColor.white, NSColor(hex: 0x16181d)))
     static let onMeetingRowSub = Color(nsColor: Theme.dyn(NSColor(hex: 0xcdd1d8), NSColor(hex: 0x4b515c)))
     static let text2      = Color(nsColor: Theme.dyn(Theme.text2, Theme.darkText))
