@@ -143,6 +143,26 @@ if let i = CommandLine.arguments.firstIndex(of: "--render-menubar"), i + 1 < Com
     exit(0)
 }
 
+// 진단용: 넣어 둔 키가 실제로 쓸 수 있는지 하나씩 확인한다.
+// ⚠️ 콜백이 메인 큐로 오므로 세마포어로 막으면 교착된다. 런루프를 돌리며 기다린다
+//    (`--check-update` 와 같은 이유).
+if CommandLine.arguments.contains("--probe-keys") {
+    var left = 0
+    for slot in KeychainStore.Slot.allCases {
+        guard KeychainStore.read(slot)?.isEmpty == false else {
+            print("  \(slot.rawValue): 키 없음"); continue
+        }
+        left += 1
+        KeyProbe.check(slot) { status in
+            print("  \(slot.rawValue): \(status) — \(status.label)")
+            left -= 1
+        }
+    }
+    let deadline = Date().addingTimeInterval(40)
+    while left > 0 && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
+    exit(0)
+}
+
 // 진단용: 이미 받아 적어 둔 글(.txt)로 요약만 다시 돌린다.
 // 받아쓰기는 48분에 4분 30초가 걸리는데 요약은 몇 초다. 요약이 503 으로 죽었다고
 // 받아쓰기부터 다시 하게 만들면 안 된다.
@@ -519,6 +539,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.write("=== Brefly 시작 === 로그: \(Log.url.path)")
         Prefs.migrateFromPreviousNamesIfNeeded()
+        // CLI 를 쓰던 사람은 말없이 AUTO 로 떨어진다. 왜 달라졌는지 한 번은 알려 준다.
+        if let note = Prefs.migrateAwayFromCLIIfNeeded() {
+            Log.write("CLI 백엔드 제거 — AUTO 로 옮김")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                self?.setState(.idle, message: note)
+            }
+        }
 
         NSApp.applicationIconImage = Logo.appIcon()
 
@@ -1169,8 +1196,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         settings.model.actions.testPaste = { [weak self] in self?.testPaste() }
         settings.model.actions.testBackend = { [weak self] in self?.testClaude() }
         settings.model.actions.listGeminiModels = { [weak self] in self?.listGeminiModels() }
-        settings.model.actions.checkCLI = { [weak self] in self?.checkCLI() }
-        settings.model.actions.resetCLIFlags = { [weak self] in self?.resetCLIFlags() }
         settings.model.actions.openLog = { [weak self] in self?.openLog() }
         settings.model.actions.showDiagnostics = { [weak self] in self?.showDiagnostics() }
         settings.model.actions.openDictationSettings = { [weak self] in self?.openDictationSettings() }
@@ -1460,11 +1485,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                             action: #selector(pickGeminiModel(_:)))
         case .apple:
             break
-        case .api, .cli:
+        case .api:
             addRadioSubmenu(to: menu, title: "Claude 모델",
                             items: Prefs.models,
                             selected: Prefs.models.firstIndex(of: Prefs.model) ?? 0,
                             action: #selector(pickModel(_:)))
+        case .openai:
+            addRadioSubmenu(to: menu, title: "ChatGPT 모델",
+                            items: Prefs.openaiModels,
+                            selected: Prefs.openaiModels.firstIndex(of: Prefs.openaiModel) ?? 0,
+                            action: #selector(pickOpenAIModel(_:)))
         }
 
         menu.addItem(.separator())
@@ -1498,10 +1528,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let note = NSMenuItem(title: "   ↳ \(AppleClient.availability().note)", action: nil, keyEquivalent: "")
             note.isEnabled = false
             menu.addItem(note)
-        case .api, .cli:
+        case .api:
             let keyItem = NSMenuItem(title: "Claude API 키 설정…", action: #selector(setAPIKey), keyEquivalent: "")
             keyItem.target = self
             menu.addItem(keyItem)
+        case .openai:
+            let keyItem = NSMenuItem(title: "ChatGPT API 키 설정…", action: #selector(setOpenAIKey), keyEquivalent: "")
+            keyItem.target = self
+            menu.addItem(keyItem)
+            if KeychainStore.read(.openai)?.isEmpty != false {
+                let hint = NSMenuItem(title: "   ↳ platform.openai.com/api-keys 에서 발급 (ChatGPT 구독과 별도 과금)",
+                                      action: nil, keyEquivalent: "")
+                hint.isEnabled = false
+                menu.addItem(hint)
+            }
         }
 
         menu.addItem(.separator())
@@ -1511,10 +1551,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         for (title, sel) in [("붙여넣기 테스트", #selector(testPaste)),
                              ("AI 모델 연결 테스트", #selector(testClaude)),
                              ("Gemini 모델 목록", #selector(listGeminiModels)),
-                             ("Claude Code CLI 확인", #selector(checkCLI)),
-                             ("CLI 경로 직접 지정…", #selector(setCLIPath)),
                              ("받아쓰기 설정 열기", #selector(openDictationSettings)),
-                             ("CLI 플래그 캐시 초기화", #selector(resetCLIFlags)),
                              ("로그 열기", #selector(openLog)),
                              ("현재 상태 진단", #selector(showDiagnostics))] {
             let item = NSMenuItem(title: title, action: sel, keyEquivalent: "")
@@ -1593,6 +1630,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     @objc private func pickGeminiModel(_ sender: NSMenuItem) {
         Prefs.geminiModel = Prefs.geminiModels[sender.tag]
         setState(state, message: "Gemini 모델: \(Prefs.geminiModel)")
+    }
+
+    @objc private func pickOpenAIModel(_ sender: NSMenuItem) {
+        Prefs.openaiModel = Prefs.openaiModels[sender.tag]
+        setState(state, message: "ChatGPT 모델: \(Prefs.openaiModel)")
+    }
+
+    @objc private func setOpenAIKey() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "ChatGPT API 키"
+        // ⚠️ 이걸 꼭 적는다. ChatGPT 구독료를 내고 있으면 API 도 포함이라고 생각하기 쉽다.
+        alert.informativeText = """
+            platform.openai.com/api-keys 에서 발급받습니다.
+
+            ChatGPT 구독(Plus 등)과 요금이 **따로 나갑니다.** 구독 중이어도 API 는 쓴 만큼
+            별도로 청구되니, 결제 수단을 등록해야 씁니다.
+            """
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        field.stringValue = KeychainStore.read(.openai) ?? ""
+        field.placeholderString = "sk-…"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "저장")
+        alert.addButton(withTitle: "취소")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let key = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        KeychainStore.write(key, to: .openai)
+        setState(state, message: key.isEmpty ? "ChatGPT 키를 지웠습니다." : "ChatGPT 키를 저장했습니다.")
     }
 
     @objc private func setGeminiKey() {
@@ -2257,51 +2322,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    @objc private func checkCLI() {
-        setState(state, message: "CLI 확인 중…")
-        CLIClient.shared.status { info in
-            DispatchQueue.main.async {
-                Log.write("CLI 상태\n\(info)")
-                NSApp.activate(ignoringOtherApps: true)
-                let alert = NSAlert()
-                alert.messageText = "Claude Code CLI"
-                alert.informativeText = info
-                alert.addButton(withTitle: "복사")
-                alert.addButton(withTitle: "닫기")
-                if alert.runModal() == .alertFirstButtonReturn {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(info, forType: .string)
-                }
-                self.setState(.idle, message: "준비됨")
-            }
-        }
-    }
 
-    @objc private func setCLIPath() {
-        NSApp.activate(ignoringOtherApps: true)
-        let alert = NSAlert()
-        alert.messageText = "claude 실행 파일 경로"
-        alert.informativeText = "터미널에서 `which claude`로 확인한 경로를 넣으세요. 비워 두면 자동으로 찾습니다."
-        alert.addButton(withTitle: "저장")
-        alert.addButton(withTitle: "취소")
 
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 380, height: 24))
-        field.placeholderString = CLIClient.resolveExecutable() ?? "/Users/이름/.local/bin/claude"
-        field.stringValue = Prefs.cliPath ?? ""
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-
-        if alert.runModal() == .alertFirstButtonReturn {
-            let path = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            Prefs.cliPath = path.isEmpty ? nil : path
-            setState(.idle, message: "CLI 경로: \(CLIClient.resolveExecutable() ?? "못 찾음")")
-        }
-    }
-
-    @objc private func resetCLIFlags() {
-        Prefs.unsupportedCLIFlags = []
-        setState(.idle, message: "CLI 플래그 캐시를 지웠습니다. 다음 호출에서 다시 탐색합니다.")
-    }
 
     @objc private func openLog() {
         NSWorkspace.shared.open(Log.url)
@@ -2321,7 +2343,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             Gemini 키 저장됨: \(KeychainStore.read(.gemini)?.isEmpty == false)
             Gemini 모델: \(Prefs.geminiModel)
             Anthropic 키 저장됨: \(KeychainStore.read(.anthropic)?.isEmpty == false)
-            claude CLI 경로: \(CLIClient.resolveExecutable() ?? "못 찾음")
             Claude 모델: \(Prefs.model)
             로그: \(Log.url.path)
             """

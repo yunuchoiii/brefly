@@ -478,7 +478,7 @@ enum Polisher {
                 completion(result); return
             }
             Log.write("\(backend.title) 실패(\(error.localizedDescription.prefix(60))) — \(next.title) 로 전환")
-            report("\(backend.title) 가 응답하지 않아 \(next.title) 로 넘어갑니다" + (next == .cli ? " — 10~60초 걸립니다" : ""))
+            report("\(backend.title) 가 응답하지 않아 \(next.title) 로 넘어갑니다")
             run(raw, backend: next, allowFallback: false, completion: completion)
         }
         switch backend {
@@ -490,8 +490,8 @@ enum Polisher {
             AppleClient.shared.polish(raw, style: Prefs.style, completion: handle)
         case .api:
             ClaudeClient.shared.polish(raw, model: Prefs.model, style: Prefs.style, completion: handle)
-        case .cli:
-            CLIClient.shared.polish(raw, model: Prefs.model, style: Prefs.style, completion: handle)
+        case .openai:
+            GPTClient.shared.polish(raw, model: Prefs.openaiModel, style: Prefs.style, completion: handle)
         }
     }
 
@@ -597,7 +597,6 @@ enum Polisher {
         if AppleClient.availability().ok { order.append(.apple) }
         if KeychainStore.read(.anthropic)?.isEmpty == false { order.append(.api) }
         if KeychainStore.read(.gemini)?.isEmpty == false { order.append(.gemini) }
-        if Prefs.cliFallback, CLIClient.resolveExecutable() != nil { order.append(.cli) }
         return order.first { $0 != failed }
     }
 }
@@ -608,6 +607,61 @@ struct ClaudeClient {
     static let shared = ClaudeClient()
 
     private let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
+
+    /// 지시문과 원문을 그대로 넘겨 한 번 부른다. 회의록(`MeetingNotes`)이 쓴다 —
+    /// 거기는 글이 4만 자까지 가고 출력도 길어서 `polish` 의 4000 토큰·30초로는 잘린다.
+    func raw(system: String, user: String, model: String,
+             maxTokens: Int, timeout: TimeInterval,
+             completion: @escaping (Result<String, Error>) -> Void) {
+        guard let key = KeychainStore.readAPIKey(), !key.isEmpty else {
+            completion(.failure(ClaudeError.noAPIKey)); return
+        }
+        let body: [String: Any] = [
+            "model": model,
+            "max_tokens": maxTokens,
+            "system": system,
+            "messages": [["role": "user", "content": user]],
+        ]
+        var req = URLRequest(url: endpoint)
+        req.httpMethod = "POST"
+        req.timeoutInterval = timeout
+        req.setValue(key, forHTTPHeaderField: "x-api-key")
+        req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        let started = Date()
+        URLSession.shared.dataTask(with: req) { data, response, error in
+            let elapsed = String(format: "%.1f", Date().timeIntervalSince(started))
+            if let error { completion(.failure(error)); return }
+            guard let data, let http = response as? HTTPURLResponse else {
+                completion(.failure(ClaudeError.badResponse)); return
+            }
+            guard (200..<300).contains(http.statusCode) else {
+                let text = String(data: data, encoding: .utf8) ?? ""
+                Log.write("Claude HTTP \(http.statusCode) (\(elapsed)초): \(text.prefix(300))")
+                completion(.failure(ClaudeError.http(http.statusCode, text))); return
+            }
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let content = json["content"] as? [[String: Any]] else {
+                completion(.failure(ClaudeError.badResponse)); return
+            }
+            // ⚠️ 응답은 `thinking` 블록과 `text` 블록으로 나뉘어 온다. `text` 만 골라야 한다.
+            let text = content.filter { ($0["type"] as? String) == "text" }
+                .compactMap { $0["text"] as? String }.joined()
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let stop = json["stop_reason"] as? String ?? "?"
+            let thinking = ((json["usage"] as? [String: Any])?["output_tokens_details"]
+                            as? [String: Any])?["thinking_tokens"] as? Int ?? 0
+            Log.write("Claude \(model) 응답 \(text.count)자, \(elapsed)초 (stop=\(stop), 생각 \(thinking)토큰)")
+            if text.isEmpty {
+                // 생각만 하다 한도에 걸린 것이다. 모델을 바꾸는 것보다 토큰을 늘려야 풀린다.
+                completion(.failure(ClaudeError.http(200, "생각하다 길이 한도에 걸려 본문이 비었습니다 (stop=\(stop))")))
+                return
+            }
+            completion(.success(text))
+        }.resume()
+    }
 
     func polish(_ raw: String,
                 model: String,

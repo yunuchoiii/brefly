@@ -63,11 +63,12 @@ final class SettingsModel: ObservableObject {
     @Published var forceServer = Prefs.forceServerRecognition { didSet { Prefs.forceServerRecognition = forceServer; changed() } }
     @Published var polishEnabled = Prefs.polishEnabled        { didSet { Prefs.polishEnabled = polishEnabled; changed() } }
     @Published var backend = Prefs.backend                    { didSet { Prefs.backend = backend; changed() } }
+    @Published var tier = Prefs.tier                          { didSet { Prefs.tier = tier; changed() } }
+    @Published var meetingBackend = Prefs.meetingBackend      { didSet { Prefs.meetingBackend = meetingBackend; changed() } }
+    @Published var meetingTier = Prefs.meetingTier            { didSet { Prefs.meetingTier = meetingTier; changed() } }
     @Published var style = Prefs.style                        { didSet { Prefs.style = style; changed() } }
     @Published var geminiModel = Prefs.geminiModel            { didSet { Prefs.geminiModel = geminiModel; changed() } }
     @Published var claudeModel = Prefs.model                  { didSet { Prefs.model = claudeModel; changed() } }
-    @Published var cliPath = Prefs.cliPath ?? ""              { didSet { Prefs.cliPath = cliPath.isEmpty ? nil : cliPath; changed() } }
-    @Published var cliFallback = Prefs.cliFallback            { didSet { Prefs.cliFallback = cliFallback; changed() } }
     @Published var speakerNote = Prefs.speakerNote            { didSet { Prefs.speakerNote = speakerNote } }
     @Published var glossary = Prefs.glossary                  { didSet { Prefs.glossary = glossary } }
     @Published var usageContexts = Prefs.usageContexts        { didSet { Prefs.usageContexts = usageContexts } }
@@ -87,8 +88,6 @@ final class SettingsModel: ObservableObject {
         var testPaste: () -> Void = {}
         var testBackend: () -> Void = {}
         var listGeminiModels: () -> Void = {}
-        var checkCLI: () -> Void = {}
-        var resetCLIFlags: () -> Void = {}
         var openLog: () -> Void = {}
         var showDiagnostics: () -> Void = {}
         var openDictationSettings: () -> Void = {}
@@ -336,11 +335,16 @@ struct RecognitionPane: View {
                 SettingsRow(title: "AI 로 정리하기", subtitle: "끄면 받아쓰기 원문을 그대로 붙여 넣습니다.") {
                     InkToggle(isOn: $model.polishEnabled)
                 }
-                SettingsRow(title: "AI 모델", subtitle: backendHint) {
-                    PopupLabel(title: model.backend.shortTitle,
-                               options: Prefs.Backend.allCases.map(\.shortTitle),
-                               selected: Prefs.Backend.allCases.firstIndex(of: model.backend)) {
-                        model.backend = Prefs.Backend.allCases[$0]
+                // 받아쓰기와 회의록을 따로 고른다. 받아쓰기는 커서에 바로 들어가야 해서 속도가
+                // 먼저고, 회의록은 이미 받아쓰기에 2~5분을 썼으니 잘 뽑는 게 먼저다.
+                SettingsRow(title: "받아쓰기 정리", subtitle: backendHint) {
+                    choicePicker(Prefs.Choice(backend: model.backend, tier: model.tier)) {
+                        model.backend = $0.backend; model.tier = $0.tier
+                    }
+                }
+                SettingsRow(title: "회의록 요약", subtitle: meetingHint) {
+                    choicePicker(Prefs.Choice(backend: model.meetingBackend, tier: model.meetingTier)) {
+                        model.meetingBackend = $0.backend; model.meetingTier = $0.tier
                     }
                 }
                 PolishStyleRow(model: model)
@@ -360,24 +364,48 @@ struct RecognitionPane: View {
                     }
                 }
                 if model.backend != .apple {
-                    SettingsRow(title: "AI 모델이 모두 안 될 때 Claude Code 로 재시도",
-                                subtitle: "10~60초 걸려서 기본은 꺼 둡니다. 끄면 원문을 바로 복사하고 '다시 요약' 버튼을 보여 줍니다.",
-                                last: true) {
-                        InkToggle(isOn: $model.cliFallback)
-                    }
                 }
             }
 
             if model.backend != .apple {
-                SettingsSection(model.backend == .cli ? "Claude Code CLI" : "API 키") {
-                    if model.backend == .cli {
-                        CLIPathRow(model: model)
+                SettingsSection("API 키") {
+                    if false {
+                        EmptyView()
                     } else {
-                        APIKeyRow(slot: (model.backend == .gemini || model.backend == .auto) ? .gemini : .anthropic)
+                        // 받아쓰기와 회의록이 서로 다른 회사를 쓸 수 있으니 필요한 키를 전부 보여 준다.
+                        // AUTO 는 키가 있는 것 중에 고르므로 셋 다 보여 준다 — 넣어 둘수록 잘 고른다.
+                        ForEach(neededKeySlots, id: \.self) { APIKeyRow(slot: $0) }
                     }
                 }
             }
         }
+    }
+
+    /// 빠른 것과 좋은 것을 한 목록에 늘어놓는다. 모델 이름은 비개발자에게 뜻이 없어서
+    /// "Gemini — 빠름" 처럼 회사와 등급만 보여 준다.
+    private func choicePicker(_ current: Prefs.Choice,
+                              onPick: @escaping (Prefs.Choice) -> Void) -> some View {
+        PopupLabel(title: current.title,
+                   options: Prefs.choices.map(\.title),
+                   selected: Prefs.choices.firstIndex(of: current) ?? 0) {
+            onPick(Prefs.choices[$0])
+        }
+    }
+
+    private var meetingHint: String {
+        switch model.meetingBackend {
+        case .auto:   return "무료인 Gemini 부터 씁니다. 안 되면 ChatGPT, Claude 순입니다. 이 맥의 Apple AI 는 긴 회의에 쓰지 않습니다."
+        case .apple:  return "긴 회의는 이 맥의 모델이 내용을 뒤집을 수 있습니다. 클라우드 모델을 권합니다."
+        default:      return "받아쓰기와 따로 고릅니다. 회의록은 시간이 조금 더 걸려도 잘 정리하는 쪽이 낫습니다."
+        }
+    }
+
+    /// 지금 설정으로 필요한 키 칸들. 둘 중 하나라도 AUTO 면 셋 다 보여 준다.
+    private var neededKeySlots: [KeychainStore.Slot] {
+        let all: [KeychainStore.Slot] = [.gemini, .anthropic, .openai]
+        if model.backend == .auto || model.meetingBackend == .auto { return all }
+        let used = Set([model.backend.keySlot, model.meetingBackend.keySlot].compactMap { $0 })
+        return all.filter { used.contains($0) }
     }
 
     private var backendHint: String {
@@ -388,7 +416,7 @@ struct RecognitionPane: View {
         case .gemini: return "구글 AI 입니다. 무료 키로 쓸 수 있고 1~5초 걸리며, 혼잡할 땐 실패하기도 합니다."
         case .apple:  return AppleClient.availability().note
         case .api:    return "Anthropic 의 Claude 입니다. 유료 크레딧이 필요하고 1초 안팎 걸립니다."
-        case .cli:    return "Claude Code 구독으로 처리합니다. 10~60초로 느립니다."
+        case .openai: return "OpenAI 의 ChatGPT 입니다. 유료 크레딧이 필요합니다. ChatGPT 구독과는 요금이 따로 나갑니다."
         }
     }
 
@@ -401,17 +429,6 @@ struct RecognitionPane: View {
     }
 }
 
-private extension Prefs.Backend {
-    var shortTitle: String {
-        switch self {
-        case .auto:   return "AUTO"
-        case .gemini: return "Gemini"
-        case .apple:  return "Apple AI (이 맥)"
-        case .api:    return "Claude API"
-        case .cli:    return "Claude Code"
-        }
-    }
-}
 
 struct APIKeyRow: View {
     let slot: KeychainStore.Slot
@@ -421,12 +438,31 @@ struct APIKeyRow: View {
     @State private var showHelp = false
 
     private var issueURL: String {
-        slot == .gemini ? "https://aistudio.google.com/apikey" : "https://console.anthropic.com/settings/keys"
+        switch slot {
+        case .gemini:    return "https://aistudio.google.com/apikey"
+        case .anthropic: return "https://console.anthropic.com/settings/keys"
+        case .openai:    return "https://platform.openai.com/api-keys"
+        }
+    }
+
+    private var slotTitle: String {
+        switch slot {
+        case .gemini:    return "Gemini"
+        case .anthropic: return "Claude"
+        case .openai:    return "ChatGPT"
+        }
     }
 
     /// 비개발자용 발급 안내. ? 버튼을 누르면 말풍선으로 뜬다.
     private var helpSteps: [String] {
-        slot == .gemini
+        if slot == .openai {
+            // ⚠️ 마지막 줄을 꼭 넣는다. 구독료를 내고 있으면 API 도 포함이라고 생각하기 쉽다.
+            return ["아래 '발급 페이지 열기'를 누르면 OpenAI 플랫폼이 열립니다. 로그인하세요.",
+                    "'Create new secret key' 를 눌러 키를 만듭니다. sk-… 로 시작합니다.",
+                    "키는 그때 한 번만 보여 주니 바로 복사하세요.",
+                    "ChatGPT 구독과 요금이 따로 나갑니다. 결제 수단을 등록해야 쓸 수 있고, 쓴 만큼 청구됩니다."]
+        }
+        return slot == .gemini
         ? ["아래 '발급 페이지 열기'를 누르면 Google AI Studio 가 열립니다. 구글 계정으로 로그인하세요.",
            "파란 'API 키 만들기(Create API key)' 버튼을 누릅니다. 프로젝트를 고르라고 하면 아무거나 골라도 됩니다.",
            "AIza… 로 시작하는 긴 문자열이 나옵니다. 복사 버튼을 누르세요.",
@@ -437,6 +473,54 @@ struct APIKeyRow: View {
            "Billing 에서 크레딧을 조금 충전해야 동작합니다. 한 번 요약에 5원 안팎입니다."]
     }
 
+    /// 키를 안 넣었을 때 보여 줄 안내. 회사마다 발급처와 비용이 다르다.
+    private var dotColor: Color {
+        if saved.isEmpty { return .coral }
+        switch probe {
+        case .ok:                     return .green
+        case .noCredit, .badKey:      return .coral
+        case .unknown, .rateLimited, .failed: return .text4
+        }
+    }
+
+    /// 키가 없으면 발급 안내, 있으면 **실제로 쓸 수 있는지**를 보여 준다.
+    /// 키를 넣어 둬도 크레딧이 0원이면 아무것도 안 되는데, 그걸 모르면 앱을 탓하게 된다.
+    private var statusText: String {
+        guard !saved.isEmpty else { return emptyHint }
+        switch probe {
+        case .unknown: return "키 있음 · '확인' 을 누르면 실제로 쓸 수 있는지 알아봅니다"
+        case .ok:      return "쓸 수 있습니다 · " + KeychainStore.storageDescription
+        default:       return probe.label
+        }
+    }
+
+    private func runProbe() {
+        guard !saved.isEmpty else { probe = .unknown; return }
+        probing = true
+        KeyProbe.check(slot) { status in probe = status; probing = false }
+    }
+
+    private var emptyHint: String {
+        switch slot {
+        case .gemini:    return "aistudio.google.com/apikey 에서 무료 발급\n카드 등록 불필요"
+        case .anthropic: return "console.anthropic.com 에서 발급\n크레딧 충전 필요"
+        // ⚠️ 구독과 별개라는 것을 여기서도 말한다. 제일 자주 오해하는 부분이다.
+        case .openai:    return "platform.openai.com/api-keys 에서 발급\nChatGPT 구독과 요금이 따로 나갑니다"
+        }
+    }
+
+    private var placeholder: String {
+        switch slot {
+        case .gemini:    return "AIza..."
+        case .anthropic: return "sk-ant-..."
+        case .openai:    return "sk-..."
+        }
+    }
+
+    /// 마지막으로 확인한 결과. 창을 열 때마다 또 부르지 않는다 — 확인은 실제 요청이다.
+    @State private var probe = KeyProbe.Status.unknown
+    @State private var probing = false
+
     private var masked: String {
         guard !saved.isEmpty else { return "키 없음" }
         let head = saved.prefix(7), tail = saved.suffix(4)
@@ -445,14 +529,18 @@ struct APIKeyRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            // 키 칸이 여러 개 뜨므로 이름표가 없으면 어느 게 어느 것인지 알 수 없다.
+            Text(slotTitle).font(.system(size: 12, weight: .semibold)).foregroundColor(.ink)
             HStack(spacing: 10) {
                 if editing {
-                    SecureField(slot == .gemini ? "AIza..." : "sk-ant-...", text: $draft)
+                    SecureField(placeholder, text: $draft)
                         .textFieldStyle(.roundedBorder).font(.system(size: 12, design: .monospaced))
                     SmallButton("저장", filled: true) {
                         KeychainStore.write(draft.trimmingCharacters(in: .whitespacesAndNewlines), to: slot)
                         saved = KeychainStore.read(slot) ?? ""
                         editing = false
+                        // 넣자마자 확인해 준다. "저장했는데 왜 안 되지" 를 없애는 게 핵심이다.
+                        runProbe()
                     }
                     SmallButton("취소") { editing = false }
                 } else {
@@ -470,7 +558,7 @@ struct APIKeyRow: View {
                 .help("키 받는 방법")
                 .popover(isPresented: $showHelp, arrowEdge: .bottom) {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text(slot == .gemini ? "Gemini API 키 받는 법 (무료)" : "Claude API 키 받는 법")
+                        Text(slot == .gemini ? "Gemini API 키 받는 법 (무료)" : "\(slotTitle) API 키 받는 법")
                             .font(.system(size: 13, weight: .bold))
                         ForEach(Array(helpSteps.enumerated()), id: \.offset) { i, step in
                             HStack(alignment: .top, spacing: 8) {
@@ -490,38 +578,39 @@ struct APIKeyRow: View {
                 }
             }
             HStack(spacing: 6) {
-                Circle().fill(saved.isEmpty ? Color.coral : Color.green).frame(width: 6, height: 6)
-                Text(saved.isEmpty
-                     ? (slot == .gemini ? "aistudio.google.com/apikey 에서 무료 발급\n카드 등록 불필요"
-                                        : "console.anthropic.com 에서 발급\n크레딧 충전 필요")
-                     : "키 확인됨 · " + KeychainStore.storageDescription)
+                Circle().fill(dotColor).frame(width: 6, height: 6)
+                Text(statusText)
                     .font(.system(size: 11)).foregroundColor(.text3)
-                Button("발급 페이지 열기") {
-                    if let u = URL(string: issueURL) { NSWorkspace.shared.open(u) }
-                }.buttonStyle(.link).font(.system(size: 11))
+                    .fixedSize(horizontal: false, vertical: true)
+                // 칸마다 안내 글 길이가 달라서 링크가 들쭉날쭉했다. 오른쪽 끝에 고정한다.
+                Spacer(minLength: 8)
+                // ⚠️ 링크 두 개를 나란히 두면 글자만 붙어 있어 하나로 읽힌다. 사이에 선을 긋는다.
+                if !saved.isEmpty {
+                    Button(probing ? "확인 중…" : "확인") { runProbe() }
+                        .buttonStyle(.link).font(.system(size: 11)).fixedSize()
+                        .disabled(probing)
+                    Rectangle().fill(Color.lineStrong).frame(width: 1, height: 11)
+                }
+                // 크레딧이 없을 때는 발급이 아니라 **충전**으로 보내야 한다. 키는 이미 있다.
+                if probe == .noCredit, let billing = KeyProbe.billingURL(slot) {
+                    Button("크레딧 충전") { if let u = URL(string: billing) { NSWorkspace.shared.open(u) } }
+                        .buttonStyle(.link).font(.system(size: 11)).fixedSize()
+                } else {
+                    Button("발급 페이지 열기") {
+                        if let u = URL(string: issueURL) { NSWorkspace.shared.open(u) }
+                    }.buttonStyle(.link).font(.system(size: 11)).fixedSize()
+                }
             }
         }
         .padding(14)
-        .onAppear { saved = KeychainStore.read(slot) ?? "" }
-        .onChange(of: slot) { s in saved = KeychainStore.read(s) ?? ""; editing = false }
+        // 창을 열 때는 **기억해 둔 결과만** 보여 준다. 열 때마다 부르면 실제 요청이 나간다.
+        .onAppear { saved = KeychainStore.read(slot) ?? ""; probe = KeyProbe.remembered(slot) }
+        .onChange(of: slot) { s in
+            saved = KeychainStore.read(s) ?? ""; editing = false; probe = KeyProbe.remembered(s)
+        }
     }
 }
 
-struct CLIPathRow: View {
-    @ObservedObject var model: SettingsModel
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                TextField(CLIClient.resolveExecutable() ?? "/opt/homebrew/bin/claude", text: $model.cliPath)
-                    .textFieldStyle(.roundedBorder).font(.system(size: 12, design: .monospaced))
-                SmallButton("확인", filled: true) { model.actions.checkCLI() }
-            }
-            Text(CLIClient.resolveExecutable().map { "사용 중: \($0)" } ?? "claude 실행 파일을 찾지 못했습니다. `which claude` 결과를 넣어 주세요.")
-                .font(.system(size: 11)).foregroundColor(.text3)
-        }
-        .padding(14)
-    }
-}
 
 // MARK: 단축키
 
@@ -607,8 +696,6 @@ struct AdvancedPane: View {
                 ActionRow("AI 모델 연결 테스트", "짧은 문장을 실제로 정리해 봅니다.", action: model.actions.testBackend)
                 ActionRow("붙여넣기 테스트", "3초 뒤 커서 위치에 텍스트를 넣습니다. 자동 붙여넣기가 켜져 있어야 합니다.", action: model.actions.testPaste)
                 ActionRow("Gemini 모델 목록", "이 키로 쓸 수 있는 모델을 조회합니다.", action: model.actions.listGeminiModels)
-                ActionRow("Claude Code CLI 확인", "경로·버전·로그인 상태를 확인합니다.", action: model.actions.checkCLI)
-                ActionRow("CLI 플래그 캐시 초기화", "미지원으로 기억해 둔 플래그를 지웁니다.", action: model.actions.resetCLIFlags)
                 ActionRow("로그 열기", Log.url.path, action: model.actions.openLog, last: true)
             }
             SettingsSection("시스템") {
