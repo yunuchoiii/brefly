@@ -972,6 +972,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 Log.write("클립보드 복사 꺼짐 — 기록에만 저장")
             }
             NSSound(named: "Tink")?.play()
+            model.resultShownAt = Date()
             model.phase = .done(record, Prefs.copyToClipboard ? .copied : .viewing)
             setState(.idle, message: Prefs.copyToClipboard ? "\(message) — ⌘V로 붙여넣으세요" : message)
             showResultOrClose()
@@ -1047,6 +1048,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let now = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
             Log.write("커서 위치에 붙여넣음 (\(text.count)자) — 대상 \(appBeforeRecording?.localizedName ?? "없음"), 붙일 때 최전면 \(now)")
         }
+        model.resultShownAt = Date()
         model.phase = .done(record, pasted ? .pasted : .copied)
         setState(.idle, message: pasted ? message : "\(message) — ⌘V로 붙여넣으세요")
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { self.showResultOrClose() }
@@ -1119,8 +1121,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
+    /// 결과 화면을 얼마나 붙잡아 둘지. 막 끝났으면 결과를 보여 주고,
+    /// 시간이 지난 뒤 열면 대기 화면이 낫다 — 지난 요약이 떠 있으면 새로 녹음하러 온 길이 막힌다.
+    private static let resultStaleAfter: TimeInterval = 10
+
     private func showPopover() {
         guard let button = statusItem.button, !popover.isShown else { return }
+        // 오래된 결과는 치운다. 기록에서 꺼내 본 것(`resultShownAt` 이 비어 있음)은 그대로 둔다.
+        if case .done = model.phase, let shown = model.resultShownAt,
+           Date().timeIntervalSince(shown) > Self.resultStaleAfter {
+            model.phase = .idle
+            model.resultShownAt = nil
+        }
         model.refreshPrefs()
         // 시스템 모드는 메뉴바가 아니라 앱의 현재 모드를 따르게 명시한다 (메뉴바는 배경화면에 따라 다크일 수 있다)
         popover.appearance = Prefs.appearance.nsAppearance
@@ -1246,6 +1258,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         model.actions.openMeeting = { [weak self] record in
             self?.popover.performClose(nil)
             self?.openMeetingRecord(record)
+        }
+        // 결과 창에서 이름을 바꾸면 팝오버 목록도 따라 바뀌어야 한다.
+        MeetingWindow.shared.onRenamed = { [weak self] in
+            self?.model.meetingHistory = MeetingHistoryStore.load()
         }
         model.actions.renameMeeting = { [weak self] record in
             guard let self else { return }

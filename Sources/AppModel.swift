@@ -69,6 +69,10 @@ final class AppModel: ObservableObject {
         case error(String)
     }
 
+    /// 요약 결과가 화면에 놓인 시각. 팝오버를 다시 열 때 너무 오래된 결과면 대기 화면으로 돌린다.
+    /// 기록에서 꺼내 본 것에는 채우지 않는다 — 그건 사용자가 일부러 연 것이라 저절로 닫히면 안 된다.
+    @Published var resultShownAt: Date?
+
     enum Screen {
         case main
         case history
