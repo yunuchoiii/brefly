@@ -63,19 +63,24 @@ struct IdleView: View {
                 if model.tab == .dictation {
                     VStack(spacing: 0) {
 
+                    // 회의록 탭의 칸들과 같은 짜임으로 맞춘다 — 왼쪽에 아이콘과 이름,
+                    // 오른쪽 끝에 단축키와 "누르면 바로 녹음"을 뜻하는 코랄 점.
+                    // 전에는 제목만 가운데 있고 단축키가 따로 떠 있어 두 탭이 따로 놀았다.
                     Button(action: model.actions.startRecording) {
-                        HStack(spacing: 8) {
+                        HStack(spacing: 11) {
+                            Image(systemName: "waveform").font(.system(size: 14))
+                                .frame(width: 18)
+                            Text("녹음").font(.system(size: 13, weight: .bold))
+                            Spacer(minLength: 0)
+                            KeyCap(model.hotKeyTitle, accent: true)
                             Circle().fill(Color.coral).frame(width: 8, height: 8)
-                            Text("녹음 시작").font(.system(size: 14, weight: .semibold))
                         }
                         .foregroundColor(.onPrimary)
+                        .padding(.horizontal, 12)
                         .frame(maxWidth: .infinity).frame(height: 42)
-                        // 제목은 가운데 그대로 두고 단축키만 오른쪽에 붙인다. HStack 에 넣으면 제목이 왼쪽으로 밀린다.
-                        .overlay(alignment: .trailing) {
-                            KeyCap(model.hotKeyTitle, accent: true).padding(.trailing, 12)
-                        }
                         .background(Color.primaryFill)
                         .cornerRadius(10)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 12)
@@ -842,12 +847,13 @@ struct MeetingTabView: View {
                     liveCard(icon: "video", title: "화상 회의", fill: .meetingRow2,
                              action: model.actions.startMeetingVideoCall)
                 }
-                // 파일은 창을 여는 동작이라 채우지 않는다. 흰 칸에 점선만 둘러 실시간 둘과 갈라 놓는다.
+                // 파일은 지금 녹음하는 것이 아니라 **창을 여는** 동작이라 실시간 둘과 갈라 놓는다.
+                // 색을 한 단계 물린 회색으로 둔다 — 흰 칸이면 팝오버 바탕에 묻힌다.
                 // ⚠️ 끌어다 놓기는 안 된다. 팝오버 밖을 누르는 순간 닫혀서 파일을 끌어올 수가 없다.
                 //    할 수 없는 일을 적어 두면 해 보다 안 돼서 앱을 탓하게 된다.
                 row(icon: "doc.text",
-                    title: "녹음 파일로 만들기", detail: nil,
-                    fill: .paper, onFill: false, dot: false, dashed: false,
+                    title: "녹음본에서 추출", detail: nil,
+                    fill: .meetingRowFile, onFill: false, dot: false,
                     action: model.actions.makeMeetingNotes)
 
                 HStack(spacing: 5) {
@@ -933,10 +939,9 @@ struct MeetingTabView: View {
 
     private func row(icon: String,
                      title: String, detail: String?, fill: Color, onFill: Bool,
-                     dot: Bool, dashed: Bool, action: @escaping () -> Void) -> some View {
+                     dot: Bool, action: @escaping () -> Void) -> some View {
         let titleColor: Color = onFill ? .onMeetingRow : .ink
         let detailColor: Color = onFill ? .onMeetingRowSub : .text3
-        let borderColor: Color = onFill ? .onMeetingRowSub : .radioOff
         return Button(action: action) {
             HStack(spacing: 11) {
                 Image(systemName: icon).font(.system(size: 14)).foregroundColor(titleColor)
@@ -953,12 +958,9 @@ struct MeetingTabView: View {
                 if dot { Circle().fill(Color.coral).frame(width: 8, height: 8) }
             }
             .padding(.horizontal, 12).padding(.vertical, 10)
+            // ⚠️ 테두리를 두르지 않는다. 바탕색만으로 칸이 충분히 드러나고,
+            //    테두리까지 있으면 위의 실시간 두 칸보다 오히려 더 튄다.
             .background(fill)
-            .overlay {
-                if !onFill {
-                    RoundedRectangle(cornerRadius: 10).strokeBorder(borderColor.opacity(0.55), lineWidth: 1)
-                }
-            }
             .cornerRadius(10)
             .contentShape(Rectangle())
         }
