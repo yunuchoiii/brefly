@@ -19,6 +19,13 @@ enum GPTError: LocalizedError {
         case .http(let code, let body):
             // 없는 모델 이름을 부르면 404 다. 이름이 바뀌었을 때 원인을 바로 알 수 있게 적는다.
             if code == 404 { return "그 이름의 모델이 없습니다 (404). 모델 이름이 바뀌었을 수 있습니다." }
+            // ⚠️ 신규 계정은 **분당 10,000 토큰** 한도다. 48분 회의 원문만 11,149 토큰이라
+            //    긴 회의는 이 벽에 걸린다(2026-09-30 실측). 코드로는 못 푼다 —
+            //    영어 오류를 그대로 보여 주면 무엇을 해야 할지 알 수가 없다.
+            if body.contains("Request too large") || body.contains("tokens per min") {
+                return "회의가 길어 ChatGPT 계정의 1분 한도를 넘었습니다. "
+                     + "Gemini 나 Claude 로 바꾸거나, OpenAI 에서 사용 등급이 오르면 풀립니다."
+            }
             return "ChatGPT 요청이 실패했습니다 (\(code)). \(body.prefix(140))"
         case .badResponse:         return "ChatGPT 응답을 읽지 못했습니다."
         case .empty:               return "ChatGPT 응답이 비어 있습니다."
