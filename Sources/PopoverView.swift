@@ -120,8 +120,10 @@ struct IdleView: View {
                         } else {
                             ForEach(model.history.prefix(3)) { record in
                                 HistoryRow(record: record,
-                                           open: { model.rawExpanded = false; model.phase = .done(record, .viewing) },
-                                           copy: { model.actions.copy(record) })
+                                           open: { model.rawExpanded = false; model.resultShownAt = nil; model.phase = .done(record, .viewing) },
+                                           copy: { model.actions.copy(record) },
+                                           rename: { model.actions.renameSummary(record) },
+                                           remove: { model.actions.removeSummary(record) })
                             }
                             Spacer().frame(height: 6)
                         }
@@ -148,10 +150,51 @@ struct IdleView: View {
     }
 }
 
+/// 회의록 목록의 한 줄. `HistoryRow`(요약)와 같은 모양으로 맞춘다 —
+/// ⚠️ 마우스를 올렸을 때 바탕이 바뀌는 것은 `@State` 가 있어야 해서 별도 뷰로 뺀다.
+///    `ForEach` 안에 그대로 두면 줄마다 상태를 가질 수 없어 요약 쪽만 반응했다.
+struct MeetingHistoryRow: View {
+    let record: MeetingRecord
+    @ObservedObject var model: AppModel
+    @State private var hover = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(record.title)
+                .font(.system(size: 12.5, weight: .semibold)).foregroundColor(.ink)
+                .lineLimit(1)
+            Text(record.subtitle)
+                .font(.system(size: 11)).foregroundColor(.text3)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // 받아쓰기 쪽 `HistoryRow` 와 같은 값(가로 16, 세로 7)이라야 두 탭이 같아 보인다.
+        .padding(.horizontal, 16).padding(.vertical, 7)
+        .background(hover ? Color.fill : Color.clear)
+        .contentShape(Rectangle())
+        .onTapGesture { model.actions.openMeeting(record) }
+        .onHover { hover = $0 }
+        // 오른쪽 클릭으로 이름을 고치고 목록에서 뺀다. 줄마다 버튼을 달면
+        // 두 줄짜리 항목이 더 빽빽해진다.
+        .contextMenu {
+            Button("이름 바꾸기…") { model.actions.renameMeeting(record) }
+            Button("Finder에서 보기") {
+                NSWorkspace.shared.activateFileViewerSelecting([record.notesFile])
+            }
+            Divider()
+            // ⚠️ 이름을 분명히 한다. "삭제" 라고만 하면 녹음까지 지운 줄 안다.
+            //    녹음은 다시 만들 수 없어서 여기서는 목록에서만 뺀다.
+            Button("목록에서 지우기") { model.actions.forgetMeeting(record) }
+        }
+    }
+}
+
 struct HistoryRow: View {
     let record: SummaryRecord
     let open: () -> Void
     let copy: () -> Void
+    /// 오른쪽 클릭 메뉴. 회의록 목록과 같은 방식이다.
+    var rename: (() -> Void)? = nil
+    var remove: (() -> Void)? = nil
     @State private var hover = false
 
     var meta: String {
@@ -174,6 +217,16 @@ struct HistoryRow: View {
             .help("요약 복사")
         }
         .padding(.horizontal, 16).padding(.vertical, 7)
+        .contextMenu {
+            if let rename { Button("이름 바꾸기…") { rename() } }
+            Button("요약 복사") { copy() }
+            if let remove {
+                Divider()
+                // ⚠️ 여기는 정말로 지운다. 요약과 원문이 이 기록 안에만 있어서 되돌릴 수 없다.
+                //    회의록의 "목록에서 지우기"와 다르다 — 그쪽은 파일이 따로 남는다.
+                Button("지우기") { remove() }
+            }
+        }
         .background(hover ? Color.fill : Color.clear)
         .contentShape(Rectangle())
         .onTapGesture(perform: open)
@@ -303,9 +356,49 @@ struct PolishingView: View {
 // MARK: - 1c 요약 완료
 
 struct DoneView: View {
+
+    /// 원문이 네 줄을 넘는지 잰다. 넘지 않으면 "펼치기" 버튼을 숨긴다.
+    ///
+    /// ⚠️ SwiftUI 는 `lineLimit` 때문에 글이 잘렸는지를 알려 주지 않는다. 그래서 같은
+    ///    글꼴·너비로 직접 재 본다. 경계에서 한 줄쯤 어긋날 수 있는데, **잘리는데 버튼이
+    ///    없는 쪽**이 더 나쁘므로 여유를 조금 두고 넉넉히 보여 주는 쪽으로 기운다.
+    static func overflowsFourLines(_ text: String) -> Bool {
+        let width = popoverWidth - 32          // 좌우 여백 16씩
+        let font = NSFont.systemFont(ofSize: 12)
+        let style = NSMutableParagraphStyle()
+        style.lineSpacing = 2
+        let box = (text as NSString).boundingRect(
+            with: NSSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font, .paragraphStyle: style])
+        let lineHeight = font.ascender - font.descender + font.leading + style.lineSpacing
+        return box.height > lineHeight * 4.4
+    }
+
     @ObservedObject var model: AppModel
     let record: SummaryRecord
     let delivery: AppModel.Delivery
+
+
+    /// 원문이 네 줄 안에 다 들어가는지 잰다. 들어가면 "펼치기" 버튼을 숨긴다.
+    ///
+    /// ⚠️ SwiftUI 는 `lineLimit` 때문에 잘렸는지를 알려 주지 않는다. 그래서 같은 글꼴·너비로
+    ///    TextKit 에 직접 재 본다. 값이 조금 어긋나도 한 줄 차이라, 잘리는데 버튼이 없는 쪽만
+    ///    피하면 된다 — 그래서 여유를 조금 두고 **넘칠 때만** 버튼을 보인다.
+    private var rawOverflows: Bool {
+        let inset: CGFloat = 16 * 2                 // 좌우 여백
+        let width = popoverWidth - inset
+        let font = NSFont.systemFont(ofSize: 12)
+        let style = NSMutableParagraphStyle()
+        style.lineSpacing = 2
+        let attrs: [NSAttributedString.Key: Any] = [.font: font, .paragraphStyle: style]
+        let box = (record.raw as NSString).boundingRect(
+            with: NSSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: attrs)
+        let lineHeight = font.ascender - font.descender + font.leading + style.lineSpacing
+        return box.height > lineHeight * 4.5
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -347,24 +440,26 @@ struct DoneView: View {
                 .padding(.horizontal, 16).padding(.top, 14)
             }
 
+            // ⚠️ 제목을 여기 두지 않는다. `HistoryStore.makeTitle` 이 **요약 첫 문장을 잘라**
+            //    만든 것이라, 바로 아래 본문과 같은 말이 두 번 나왔다. 목록에서는 한 줄로
+            //    가려내야 해서 제목이 필요하지만, 본문이 함께 보이는 이 화면에서는 군더더기다.
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(record.title).font(.system(size: 14, weight: .bold)).foregroundColor(.ink).lineLimit(2)
-                Spacer(minLength: 4)
                 Text(Format.localeName(record.localeID))
                     .font(.system(size: 11, weight: .medium)).foregroundColor(.text2)
                     .padding(.horizontal, 6).padding(.vertical, 2)
                     .background(Color.fill).cornerRadius(4)
                 Text(Format.duration(record.duration)).font(.system(size: 11)).foregroundColor(.text3)
+                Spacer(minLength: 4)
             }
             .padding(.horizontal, 16).padding(.top, 14)
 
             SummaryText(text: record.summary)
                 .padding(.horizontal, 16).padding(.top, 10)
 
+            // ⚠️ 여기 있던 "원문 보기" 는 아래 "전체 원문 펼치기" 와 **똑같이**
+            //    `rawExpanded` 를 뒤집기만 했다. 같은 화면에 같은 일을 하는 버튼이 둘이었다.
+            //    원문 바로 위에 붙은 아래쪽만 남긴다 — 무엇을 펼치는지가 거기서 더 분명하다.
             HStack(spacing: 8) {
-                OutlineButton(model.rawExpanded ? "원문 접기" : "원문 보기") {
-                    withAnimation(.easeInOut(duration: 0.15)) { model.rawExpanded.toggle() }
-                }
                 OutlineButton("다시 요약") { model.actions.resummarize(record) }
                 Menu {
                     Button("요약 복사") { model.actions.copy(record) }
@@ -392,11 +487,15 @@ struct DoneView: View {
                     .lineLimit(model.rawExpanded ? nil : 4)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
-                Button(model.rawExpanded ? "접기 ↑" : "전체 원문 펼치기 ↓") {
-                    withAnimation(.easeInOut(duration: 0.15)) { model.rawExpanded.toggle() }
+                // ⚠️ 네 줄 안에 다 들어가면 펼칠 것이 없다. 그런데도 버튼이 떠 있으면
+                //    눌러도 아무 일이 안 일어나 고장으로 보인다. 잘릴 때만 보여 준다.
+                if Self.overflowsFourLines(record.raw) {
+                    Button(model.rawExpanded ? "접기 ↑" : "전체 원문 펼치기 ↓") {
+                        withAnimation(.easeInOut(duration: 0.15)) { model.rawExpanded.toggle() }
+                    }
+                    .buttonStyle(.plain).font(.system(size: 11)).foregroundColor(.text3)
+                    .padding(.top, 2)
                 }
-                .buttonStyle(.plain).font(.system(size: 11)).foregroundColor(.text3)
-                .padding(.top, 2)
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
             .background(Color.paperSoft)
@@ -502,10 +601,13 @@ struct HistoryView: View {
                             HistoryRow(record: record,
                                        open: {
                                            model.rawExpanded = false
+                                           model.resultShownAt = nil
                                            model.phase = .done(record, .viewing)
                                            model.screen = .main
                                        },
-                                       copy: { model.actions.copy(record) })
+                                       copy: { model.actions.copy(record) },
+                                       rename: { model.actions.renameSummary(record) },
+                                       remove: { model.actions.removeSummary(record) })
                         }
                     }
                     .padding(.vertical, 6)
@@ -871,43 +973,34 @@ struct MeetingTabView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack {
-                    Text("최근 회의록")
-                        .font(.system(size: 11, weight: .bold)).foregroundColor(.text3)
-                        .kerning(0.4)
+                    // 받아쓰기 탭의 "최근 요약"과 같은 글꼴·색으로 맞춘다. 두 탭을 오가면
+                    // 굵기와 색이 다른 것이 바로 보인다.
+                    Text("최근 회의록").font(.system(size: 12, weight: .semibold)).foregroundColor(.text2)
                     Spacer()
                     // 시안은 두 개만 보여 준다. 더 있으면 펼쳐서 본다 —
                     // 목록 화면을 따로 만들 만큼 쌓이는 물건이 아니다.
                     if model.meetingHistory.count > 2 {
                         Button(showAll ? "접기" : "모두 보기") { showAll.toggle() }
                             .buttonStyle(.plain)
-                            .font(.system(size: 11)).foregroundColor(.text3)
+                            .font(.system(size: 12)).foregroundColor(.text3)
                     }
                 }
-                .padding(.bottom, 4)
+                .padding(.horizontal, 16).padding(.bottom, 4)
 
                 if model.meetingHistory.isEmpty {
                     Text("아직 만든 회의록이 없어요.")
                         .font(.system(size: 12)).foregroundColor(.text4)
-                        .padding(.vertical, 6)
+                        .padding(.horizontal, 16).padding(.vertical, 6)
                 } else {
                     ForEach(showAll ? model.meetingHistory : Array(model.meetingHistory.prefix(2))) { record in
-                        Button(action: { model.actions.openMeeting(record) }) {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(record.title)
-                                    .font(.system(size: 12.5, weight: .semibold)).foregroundColor(.ink)
-                                    .lineLimit(1)
-                                Text(record.subtitle)
-                                    .font(.system(size: 11)).foregroundColor(.text3)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 8).padding(.vertical, 7)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
+                        MeetingHistoryRow(record: record, model: model)
                     }
                 }
             }
-            .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 6)
+            // ⚠️ 가로 여백을 이 덩어리에 주면 안 된다. 줄이 안쪽으로 들어가서 마우스를 올렸을 때
+            //    바탕이 팝오버 끝까지 차지 않는다. 받아쓰기 쪽(`HistoryRow`)처럼 여백을
+            //    **줄 안쪽**에 준다.
+            .padding(.top, 10).padding(.bottom, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.paperSoft)
         }

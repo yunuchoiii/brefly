@@ -10,11 +10,13 @@ enum KeychainStore {
     enum Slot: String, CaseIterable {
         case anthropic = "anthropic-api-key"
         case gemini    = "gemini-api-key"
+        case openai    = "openai-api-key"
 
         var envVar: String {
             switch self {
             case .anthropic: return "ANTHROPIC_API_KEY"
             case .gemini:    return "GEMINI_API_KEY"
+            case .openai:    return "OPENAI_API_KEY"
             }
         }
     }
@@ -85,6 +87,20 @@ enum Prefs {
 
     /// 앱 이름이 바뀌면서 번들 ID 도 바뀌었다. Sokgi → Sokki (2026-09-04), Sokki → Brefly (2026-09-20).
     /// 예전 도메인의 설정·기록과 키 파일을 한 번만 옮겨온다. 오래된 것부터 차례로 훑어 중간 단계를 건너뛴 사용자도 챙긴다.
+    /// Claude Code(CLI)를 쓰던 사람을 AUTO 로 옮기고 **한 번만** 알려 준다.
+    ///
+    /// `Backend(rawValue:) ?? .auto` 라서 그냥 두면 말없이 바뀐다. 결과가 달라진 이유를
+    /// 모르면 앱을 탓하게 된다. 0.8.3 에서 CLI 를 걷어내며 넣었다.
+    /// - Returns: 알려 줄 말. 옮길 것이 없었으면 nil.
+    static func migrateAwayFromCLIIfNeeded() -> String? {
+        guard d.string(forKey: "backend") == "cli" else { return nil }
+        d.set(Backend.auto.rawValue, forKey: "backend")
+        // 부속 설정도 같이 치운다. 남겨 두면 다음에 무엇에 쓰이는지 알 수 없다.
+        for key in ["cliFallback", "cliPath", "unsupportedCLIFlags"] { d.removeObject(forKey: key) }
+        return "Claude Code(터미널) 방식이 없어졌습니다. 정리를 AUTO 로 바꿨습니다. "
+             + "설정 > 음성인식 · AI 에서 다시 고를 수 있습니다."
+    }
+
     static func migrateFromPreviousNamesIfNeeded() {
         let flag = "migratedToBrefly"
         guard !d.bool(forKey: flag) else { return }
@@ -180,32 +196,110 @@ enum Prefs {
         case gemini // Google AI Studio — 무료 티어, 1~5초 (혼잡하면 503)
         case apple  // macOS 26 Apple Intelligence 온디바이스 — 무료, 오프라인
         case api    // Anthropic API — 크레딧 충전 필요, 1초 안쪽
-        case cli    // Claude Code CLI — 구독 사용량, 10~60초
+        case openai // OpenAI API — 크레딧 충전 필요
 
         var title: String {
             switch self {
-            case .auto:   return "AUTO (Apple AI + Gemini)"
+            case .auto:   return "AUTO (알아서 고름)"
             case .gemini: return "Gemini (구글, 무료)"
             case .apple:  return "Apple AI (이 맥에서, 오프라인)"
-            case .api:    return "Claude API (유료 크레딧)"
-            case .cli:    return "Claude Code (구독, 느림)"
+            case .api:    return "Claude (유료 크레딧)"
+            case .openai: return "ChatGPT (유료 크레딧)"
             }
         }
+
+        var shortTitle: String {
+            switch self {
+            case .auto:   return "AUTO"
+            case .gemini: return "Gemini"
+            case .apple:  return "Apple AI (이 맥)"
+            case .api:    return "Claude"
+            case .openai: return "ChatGPT"
+            }
+        }
+
+        /// 빠른 모델과 좋은 모델을 따로 고를 수 있는 회사인지.
+        /// AUTO 는 알아서 고르고, Apple 온디바이스와 CLI 는 고를 모델이 하나뿐이다.
+        var hasTiers: Bool {
+            switch self {
+            case .gemini, .api, .openai: return true
+            case .auto, .apple:          return false
+            }
+        }
+
+        /// 이 회사를 쓰려면 키가 필요한가. 필요하면 어느 칸인가.
+        var keySlot: KeychainStore.Slot? {
+            switch self {
+            case .gemini: return .gemini
+            case .api:    return .anthropic
+            case .openai: return .openai
+            case .auto, .apple: return nil
+            }
+        }
+    }
+
+    /// 무엇을 정리하는 중인가. AUTO 의 기준이 여기서 갈린다.
+    enum Purpose {
+        case dictation  // 받아쓰기 — 커서에 바로 들어가야 해서 속도가 먼저다
+        case meeting    // 회의록 — 이미 받아쓰기에 2~5분을 썼다. 잘 뽑는 게 먼저다
     }
 
     /// 자동 모드에서 온디바이스가 끝난 뒤 Gemini 답을 얼마나 더 기다릴지.
     static let autoGraceSeconds: TimeInterval = 2.0
 
-    /// Gemini/Apple 이 전부 실패했을 때 Claude CLI 까지 시도할지. 10~60초 걸려서 기본은 끔.
-    static var cliFallback: Bool {
-        get { d.object(forKey: "cliFallback") as? Bool ?? false }
-        set { d.set(newValue, forKey: "cliFallback") }
+    /// 같은 회사 모델 중 어느 쪽을 쓸지. 모델 이름은 자주 바뀌고 비개발자에겐 뜻이 없어서,
+    /// 고르는 자리에는 이름 대신 **빠름 / 정확**만 보여 준다.
+    enum Tier: String, CaseIterable {
+        case fast     // 받아쓰기용. 1~5초 안에 커서에 들어가야 한다.
+        case quality  // 회의록용. 이미 받아쓰기에 2~5분을 썼으니 10초 더는 아무것도 아니다.
+
+        var suffix: String { self == .fast ? "빠름" : "정확" }
     }
+
+    /// 고르는 자리에 늘어놓을 항목 하나. 회사와 등급을 한 줄로 묶는다.
+    struct Choice: Equatable {
+        let backend: Backend
+        let tier: Tier
+        var title: String {
+            // AUTO·Apple 은 고를 모델이 하나뿐이라 등급을 붙이지 않는다.
+            backend.hasTiers ? "\(backend.shortTitle) — \(tier.suffix)" : backend.shortTitle
+        }
+    }
+
+    /// 받아쓰기와 회의록이 같은 목록에서 고른다. 빠른 것과 좋은 것이 다 들어 있다.
+    static let choices: [Choice] = Backend.allCases.flatMap { b in
+        b.hasTiers ? Tier.allCases.map { Choice(backend: b, tier: $0) }
+                   : [Choice(backend: b, tier: .fast)]
+    }
+
+    // MARK: 무엇으로 정리할까 — 받아쓰기와 회의록을 따로 고른다
 
     static var backend: Backend {
         get { Backend(rawValue: d.string(forKey: "backend") ?? "") ?? .auto }
         set { d.set(newValue.rawValue, forKey: "backend") }
     }
+
+    static var tier: Tier {
+        get { Tier(rawValue: d.string(forKey: "tier") ?? "") ?? .fast }
+        set { d.set(newValue.rawValue, forKey: "tier") }
+    }
+
+    /// 회의록 요약은 받아쓰기와 **따로** 고른다. 받아쓰기는 빠른 게 중요하고
+    /// 회의록은 잘 뽑는 게 중요해서 최적해가 다르다.
+    /// 기본값은 AUTO 다. AUTO 도 가성비 순이라 **Gemini 부터** 시도하므로 0.8.2 까지의
+    /// 동작(Gemini 고정)과 첫 결과가 같고, Gemini 가 다 실패했을 때만 다른 회사로 넘어간다.
+    static var meetingBackend: Backend {
+        get { Backend(rawValue: d.string(forKey: "meetingBackend") ?? "") ?? .auto }
+        set { d.set(newValue.rawValue, forKey: "meetingBackend") }
+    }
+
+    static var meetingTier: Tier {
+        get { Tier(rawValue: d.string(forKey: "meetingTier") ?? "") ?? .quality }
+        set { d.set(newValue.rawValue, forKey: "meetingTier") }
+    }
+
+    static var choice: Choice { Choice(backend: backend, tier: tier) }
+    static var meetingChoice: Choice { Choice(backend: meetingBackend, tier: meetingTier) }
 
     // MARK: Gemini
 
@@ -233,17 +327,7 @@ enum Prefs {
         set { d.set(newValue, forKey: "geminiModel") }
     }
 
-    /// claude 실행 파일 경로를 직접 지정할 때. 비워두면 자동 탐색.
-    static var cliPath: String? {
-        get { d.string(forKey: "cliPath") }
-        set { d.set(newValue, forKey: "cliPath") }
-    }
 
-    /// 설치된 claude 버전이 모르는 플래그. 한 번 걸리면 기억해서 다음부터 뺀다.
-    static var unsupportedCLIFlags: Set<String> {
-        get { Set(d.stringArray(forKey: "unsupportedCLIFlags") ?? []) }
-        set { d.set(Array(newValue), forKey: "unsupportedCLIFlags") }
-    }
 
     // MARK: 모델
 
@@ -253,6 +337,80 @@ enum Prefs {
     static var model: String {
         get { d.string(forKey: "model") ?? models[0] }
         set { d.set(newValue, forKey: "model") }
+    }
+
+    // MARK: ChatGPT
+
+    /// ⚠️ 모델 이름은 자주 바뀌고 없어진다. 여기 적힌 이름이 이미 퇴역했을 수 있으므로
+    ///    **첫 이름이 404 면 다음 이름으로 넘어간다**(`MeetingNotes.attempt`, `GPTClient`).
+    ///    실제로 쓸 수 있는 목록은 `--probe-keys` 옆 진단으로 키에 직접 물어볼 수 있다.
+    static let openaiModels = ["gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.4", "gpt-5.5", "gpt-6.1-sol"]
+
+    static var openaiModel: String {
+        get { d.string(forKey: "openaiModel") ?? openaiModels[0] }
+        set { d.set(newValue, forKey: "openaiModel") }
+    }
+
+    // MARK: 빠름 / 정확
+
+    /// 회사·등급으로 실제 모델 이름을 고른다. 첫 항목이 그 등급의 기본값이고,
+    /// 404·503 이면 뒤 항목으로 넘어간다.
+    /// 2026-09-30 실측으로 정한 표다.
+    ///
+    /// **빠름** — 같은 한 문장을 세 번씩 다듬어 잰 평균:
+    ///
+    ///     gpt-5.4-mini 0.85초 · gpt-5.4-nano 0.93초 · gpt-5.4 1.18초
+    ///
+    /// **정확** — 48분 회의 원문(11,149토큰)을 실제로 요약시켜 잰 값:
+    ///
+    ///     gpt-5.5       31.6초  출력 3,365토큰(그중 생각 2,048)
+    ///     claude-sonnet-5 51.2초  출력 4,753토큰
+    ///     claude-haiku    9.3초   출력   886토큰 — 빠르지만 얕다
+    ///
+    ///  셋 다 지어낸 말 없이 이름·날짜·이유까지 살렸고, haiku 만 눈에 띄게 짧았다.
+    static func modelNames(_ backend: Backend, _ tier: Tier) -> [String] {
+        switch (backend, tier) {
+        case (.gemini, .fast):    return ["gemini-3.1-flash-lite", "gemini-3.6-flash", "gemini-3.5-flash"]
+        case (.gemini, .quality): return ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite"]
+        case (.api, .fast):       return ["claude-haiku-4-5-20251001", "claude-sonnet-5"]
+        case (.api, .quality):    return ["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5-20251001"]
+        case (.openai, .fast):    return ["gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.4"]
+        case (.openai, .quality): return ["gpt-5.5", "gpt-6.1-sol", "gpt-5.4"]
+        default:                  return []
+        }
+    }
+
+    /// AUTO 가 고르는 순서. **목적에 따라 기준이 다르다.**
+    ///
+    /// - 받아쓰기: 빠른 것 먼저. 커서에 들어가기까지 1~5초 안에 끝나야 한다.
+    ///   (Apple 온디바이스와 Gemini 를 동시에 쏘는 기존 동작은 `ClaudeClient` 가 그대로 한다.)
+    /// - 회의록: **가성비 순**. 셋 다 지어낸 말 없이 잘 뽑았으므로, 같은 값이면 싼 쪽이 낫다.
+    ///   ⚠️ Apple 온디바이스는 아예 넣지 않는다. 3B 모델은 긴 글에서 결정 사항을 뒤집는다
+    ///     (CLAUDE.md "요약은 클라우드가 본체다").
+    ///
+    /// 회의록 순서의 근거 — 같은 48분 원문(16,450자)으로 잰 값이다(2026-09-30).
+    ///
+    ///     Gemini          무료 티어 — 0원
+    ///     gpt-5.5         입력 11,149 · 출력 3,365
+    ///     claude-sonnet-5 입력 19,034 · 출력 7,739 (그중 생각 6,374)
+    ///
+    /// 같은 글인데 Anthropic 이 **입력을 1.7배**로 센다(한국어를 쪼개는 방식이 다르다).
+    /// 생각 토큰도 출력 요금이라 sonnet 은 출력이 gpt-5.5 의 2.3배다. 품질 차이는 그만큼 안 났다.
+    /// 가장 좋은 것을 원하면 AUTO 가 아니라 직접 고르면 된다 — 그러라고 따로 고르게 해 뒀다.
+    ///
+    /// 키가 없는 회사는 건너뛴다 — 고를 수 없는 것을 시도해 봐야 실패만 늘어난다.
+    static func autoCandidates(for purpose: Purpose) -> [Choice] {
+        let order: [Choice] = purpose == .dictation
+            ? [Choice(backend: .gemini, tier: .fast),
+               Choice(backend: .openai, tier: .fast),
+               Choice(backend: .api,    tier: .fast)]
+            : [Choice(backend: .gemini, tier: .quality),
+               Choice(backend: .openai, tier: .quality),
+               Choice(backend: .api,    tier: .quality)]
+        return order.filter { c in
+            guard let slot = c.backend.keySlot else { return true }
+            return KeychainStore.read(slot)?.isEmpty == false
+        }
     }
 
     // MARK: 단축키

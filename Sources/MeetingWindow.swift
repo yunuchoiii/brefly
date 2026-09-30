@@ -3,10 +3,10 @@ import SwiftUI
 
 /// 만들어진 회의록 한 편. 창이 보여 줄 것을 한 덩어리로 들고 다닌다.
 struct MeetingDocument {
-    let title: String
+    var title: String
     let audio: URL
     /// 저장한 .md 파일. "Finder 에서 보기"와 고친 내용 저장이 여기로 간다.
-    let notesFile: URL
+    var notesFile: URL
     let recordedAt: Date
     let duration: Double?
     var notes: String
@@ -43,9 +43,18 @@ final class MeetingWindow: NSObject, NSWindowDelegate {
     static let shared = MeetingWindow()
     private var window: NSWindow?
 
+    /// 이름이 바뀌었을 때 창 제목 막대를 따라가게 한다.
+    func retitle(_ title: String) { window?.title = title }
+
+    /// 이름이 바뀌었을 때 부를 것. 팝오버 목록을 다시 읽게 한다.
+    var onRenamed: (() -> Void)?
+
     func show(_ document: MeetingDocument) {
-        let view = MeetingResultView(document: document)
+        let view = MeetingResultView(document: document, onRenamed: onRenamed)
         if let window {
+            // ⚠️ 제목도 같이 바꾼다. 창을 다시 쓰면서 내용만 갈았더니 **창 제목 막대에는
+            //    먼저 열었던 회의록 이름이 그대로 남아** 있었다.
+            window.title = document.title
             window.contentView = NSHostingView(rootView: view)
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -77,6 +86,9 @@ struct MeetingResultView: View {
     @State private var toast: String?
     @State private var retrying = false
     /// 모델이 마지막으로 낸 글. 사용자가 고쳤는지 가리는 기준이다.
+    /// 이름이 바뀌면 팝오버 목록도 따라 바뀌어야 한다.
+    var onRenamed: (() -> Void)? = nil
+    @State private var titleHover = false
     @State private var lastSummary = ""
     /// 다시 요약하기 직전의 글. 새 요약이 더 나쁠 수도 있어서 한 번은 되돌릴 수 있게 둔다.
     @State private var undoTarget: String?
@@ -127,7 +139,27 @@ struct MeetingResultView: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(document.title).font(.system(size: 17, weight: .bold)).foregroundColor(.ink)
+                // 이름은 탭과 무관하므로 머리말에 둔다. 연필을 붙여 **고칠 수 있다는 것**을
+                // 드러낸다 — 버튼을 따로 두면 무엇의 이름인지 한 번 더 생각해야 한다.
+                Button(action: renameDocument) {
+                    HStack(spacing: 8) {
+                        Text(document.title).font(.system(size: 17, weight: .bold)).foregroundColor(.ink)
+                        // ⚠️ 연필만 두면 획이 가늘어 글자 옆에서 묻힌다.
+                        //    테두리를 둘러 누를 것임을 드러낸다.
+                        Image(systemName: "pencil")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(titleHover ? .ink : .text3)
+                            .frame(width: 22, height: 22)
+                            .background(titleHover ? Color.fill : Color.clear)
+                            .overlay(RoundedRectangle(cornerRadius: 6)
+                                .stroke(titleHover ? Color.lineStrong : Color.line, lineWidth: 1))
+                            .cornerRadius(6)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .onHover { titleHover = $0 }
+                .help("이름 바꾸기")
                 Text([document.dateText, document.durationText].compactMap { $0 }.joined(separator: " · "))
                     .font(.system(size: 11.5)).foregroundColor(.text3)
             }
@@ -157,6 +189,32 @@ struct MeetingResultView: View {
         }
         .padding(.horizontal, 20).padding(.vertical, 12)
         .background(Color.coral.opacity(0.06))
+    }
+
+    /// 회의록 이름을 바꾼다. 목록과 `.md` 파일 이름이 함께 바뀐다.
+    /// 목록에서 오른쪽 클릭해도 되지만, 열어서 읽다가 "이거 이름 바꿔야겠다" 싶은 때가 더 잦다.
+    private func renameDocument() {
+        let alert = NSAlert()
+        alert.messageText = "회의록 이름 바꾸기"
+        alert.informativeText = "목록과 .md 파일 이름이 함께 바뀝니다."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        field.stringValue = document.title
+        alert.accessoryView = field
+        alert.addButton(withTitle: "바꾸기")
+        alert.addButton(withTitle: "취소")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name != document.title else { return }
+        guard let moved = MeetingHistoryStore.rename(notesPath: document.notesFile.path, to: name) else {
+            flash("이름을 바꾸지 못했습니다.")
+            return
+        }
+        document.title = moved.title
+        document.notesFile = moved.notesFile
+        MeetingWindow.shared.retitle(moved.title)
+        onRenamed?()
+        flash("이름을 바꿨습니다.")
     }
 
     /// 고쳐 둔 글이 있으면 먼저 묻는다. 모델 결과로 덮어쓰면 사용자가 쓴 것이 사라진다.
@@ -243,7 +301,7 @@ struct MeetingResultView: View {
                         .padding(20)
                 } else {
                     VStack(alignment: .leading, spacing: 10) {
-                        ForEach(Array(MarkdownBlock.parse(document.notes).enumerated()), id: \.offset) { _, block in
+                        ForEach(Array(MarkdownBlock.parse(document.notes, droppingTitle: document.title).enumerated()), id: \.offset) { _, block in
                             block.view
                         }
                     }
@@ -384,7 +442,20 @@ enum MarkdownBlock {
     case bullet(String)
     case paragraph(String)
 
-    static func parse(_ text: String) -> [MarkdownBlock] {
+    /// ⚠️ 저장한 `.md` 는 첫 줄이 `# <회의록 이름>` 이다(`finishMeetingNotes`). 창에는 이미
+    ///    머리말에 이름이 있어서, 그대로 그리면 같은 이름이 두 번 나온다. 첫 제목 한 줄만 뗀다.
+    static func parse(_ text: String, droppingTitle title: String? = nil) -> [MarkdownBlock] {
+        var text = text
+        if let title {
+            let first = "# " + title
+            if text.hasPrefix(first) {
+                text = String(text.dropFirst(first.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return parseBlocks(text)
+    }
+
+    private static func parseBlocks(_ text: String) -> [MarkdownBlock] {
         text.split(separator: "\n", omittingEmptySubsequences: false).compactMap { raw in
             let line = raw.trimmingCharacters(in: .whitespaces)
             if line.isEmpty { return nil }

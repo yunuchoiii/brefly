@@ -143,6 +143,47 @@ if let i = CommandLine.arguments.firstIndex(of: "--render-menubar"), i + 1 < Com
     exit(0)
 }
 
+// 진단용: 목록 이름 바꾸기·지우기가 실제로 먹는지 본다. 창을 띄우지 않고 저장소만 만진다.
+if let i = CommandLine.arguments.firstIndex(of: "--history-test") {
+    let mode = i + 1 < CommandLine.arguments.count ? CommandLine.arguments[i + 1] : "show"
+    func show(_ tag: String) {
+        print("[\(tag)] 회의록 \(MeetingHistoryStore.load().count)건")
+        for r in MeetingHistoryStore.load().prefix(3) {
+            print("   \(r.title)  ←  \((r.notesPath as NSString).lastPathComponent)")
+        }
+    }
+    show("지금")
+    if mode == "rename", let first = MeetingHistoryStore.load().first {
+        let newName = "이름바꾸기시험 " + UUID().uuidString.prefix(4)
+        print("\n→ \"\(first.title)\" 를 \"\(newName)\" 로 바꾼다")
+        let r = MeetingHistoryStore.rename(notesPath: first.notesPath, to: String(newName))
+        print("   파일도 옮겨졌나: \(FileManager.default.fileExists(atPath: r?.notesPath ?? "") ? "예" : "아니오")")
+        print("   새 경로: \((r?.notesPath as NSString?)?.lastPathComponent ?? "?")")
+        show("뒤")
+    }
+    exit(0)
+}
+
+// 진단용: 넣어 둔 키가 실제로 쓸 수 있는지 하나씩 확인한다.
+// ⚠️ 콜백이 메인 큐로 오므로 세마포어로 막으면 교착된다. 런루프를 돌리며 기다린다
+//    (`--check-update` 와 같은 이유).
+if CommandLine.arguments.contains("--probe-keys") {
+    var left = 0
+    for slot in KeychainStore.Slot.allCases {
+        guard KeychainStore.read(slot)?.isEmpty == false else {
+            print("  \(slot.rawValue): 키 없음"); continue
+        }
+        left += 1
+        KeyProbe.check(slot) { status in
+            print("  \(slot.rawValue): \(status) — \(status.label)")
+            left -= 1
+        }
+    }
+    let deadline = Date().addingTimeInterval(40)
+    while left > 0 && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
+    exit(0)
+}
+
 // 진단용: 이미 받아 적어 둔 글(.txt)로 요약만 다시 돌린다.
 // 받아쓰기는 48분에 4분 30초가 걸리는데 요약은 몇 초다. 요약이 503 으로 죽었다고
 // 받아쓰기부터 다시 하게 만들면 안 된다.
@@ -519,6 +560,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.write("=== Brefly 시작 === 로그: \(Log.url.path)")
         Prefs.migrateFromPreviousNamesIfNeeded()
+        // CLI 를 쓰던 사람은 말없이 AUTO 로 떨어진다. 왜 달라졌는지 한 번은 알려 준다.
+        if let note = Prefs.migrateAwayFromCLIIfNeeded() {
+            Log.write("CLI 백엔드 제거 — AUTO 로 옮김")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                self?.setState(.idle, message: note)
+            }
+        }
 
         NSApp.applicationIconImage = Logo.appIcon()
 
@@ -924,6 +972,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 Log.write("클립보드 복사 꺼짐 — 기록에만 저장")
             }
             NSSound(named: "Tink")?.play()
+            model.resultShownAt = Date()
             model.phase = .done(record, Prefs.copyToClipboard ? .copied : .viewing)
             setState(.idle, message: Prefs.copyToClipboard ? "\(message) — ⌘V로 붙여넣으세요" : message)
             showResultOrClose()
@@ -999,6 +1048,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let now = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
             Log.write("커서 위치에 붙여넣음 (\(text.count)자) — 대상 \(appBeforeRecording?.localizedName ?? "없음"), 붙일 때 최전면 \(now)")
         }
+        model.resultShownAt = Date()
         model.phase = .done(record, pasted ? .pasted : .copied)
         setState(.idle, message: pasted ? message : "\(message) — ⌘V로 붙여넣으세요")
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { self.showResultOrClose() }
@@ -1071,8 +1121,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
+    /// 결과 화면을 얼마나 붙잡아 둘지. 막 끝났으면 결과를 보여 주고,
+    /// 시간이 지난 뒤 열면 대기 화면이 낫다 — 지난 요약이 떠 있으면 새로 녹음하러 온 길이 막힌다.
+    private static let resultStaleAfter: TimeInterval = 10
+
     private func showPopover() {
         guard let button = statusItem.button, !popover.isShown else { return }
+        // 오래된 결과는 치운다. 기록에서 꺼내 본 것(`resultShownAt` 이 비어 있음)은 그대로 둔다.
+        if case .done = model.phase, let shown = model.resultShownAt,
+           Date().timeIntervalSince(shown) > Self.resultStaleAfter {
+            model.phase = .idle
+            model.resultShownAt = nil
+        }
         model.refreshPrefs()
         // 시스템 모드는 메뉴바가 아니라 앱의 현재 모드를 따르게 명시한다 (메뉴바는 배경화면에 따라 다크일 수 있다)
         popover.appearance = Prefs.appearance.nsAppearance
@@ -1169,8 +1229,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         settings.model.actions.testPaste = { [weak self] in self?.testPaste() }
         settings.model.actions.testBackend = { [weak self] in self?.testClaude() }
         settings.model.actions.listGeminiModels = { [weak self] in self?.listGeminiModels() }
-        settings.model.actions.checkCLI = { [weak self] in self?.checkCLI() }
-        settings.model.actions.resetCLIFlags = { [weak self] in self?.resetCLIFlags() }
         settings.model.actions.openLog = { [weak self] in self?.openLog() }
         settings.model.actions.showDiagnostics = { [weak self] in self?.showDiagnostics() }
         settings.model.actions.openDictationSettings = { [weak self] in self?.openDictationSettings() }
@@ -1200,6 +1258,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         model.actions.openMeeting = { [weak self] record in
             self?.popover.performClose(nil)
             self?.openMeetingRecord(record)
+        }
+        // 결과 창에서 이름을 바꾸면 팝오버 목록도 따라 바뀌어야 한다.
+        MeetingWindow.shared.onRenamed = { [weak self] in
+            self?.model.meetingHistory = MeetingHistoryStore.load()
+        }
+        model.actions.renameMeeting = { [weak self] record in
+            guard let self else { return }
+            guard let name = self.askName(title: "회의록 이름 바꾸기",
+                                          note: "목록과 .md 파일 이름이 함께 바뀝니다.",
+                                          current: record.title) else { return }
+            MeetingHistoryStore.rename(notesPath: record.notesPath, to: name)
+            self.model.meetingHistory = MeetingHistoryStore.load()
+        }
+        model.actions.forgetMeeting = { [weak self] record in
+            guard let self else { return }
+            let alert = NSAlert()
+            alert.messageText = "목록에서 지울까요?"
+            // ⚠️ 녹음은 다시 만들 수 없다. 여기서 지우는 것이 무엇인지 분명히 말한다.
+            alert.informativeText = "\(record.title)\n\n목록에서만 사라집니다. "
+                + "녹음과 회의록 .md 파일은 그대로 남습니다."
+            alert.addButton(withTitle: "목록에서 지우기")
+            alert.addButton(withTitle: "취소")
+            NSApp.activate(ignoringOtherApps: true)
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            MeetingHistoryStore.forget(notesPath: record.notesPath)
+            self.model.meetingHistory = MeetingHistoryStore.load()
+        }
+        model.actions.renameSummary = { [weak self] record in
+            guard let self else { return }
+            guard let name = self.askName(title: "요약 이름 바꾸기", note: nil,
+                                          current: record.title) else { return }
+            HistoryStore.rename(id: record.id, to: name)
+            self.model.history = HistoryStore.load()
+        }
+        model.actions.removeSummary = { [weak self] record in
+            guard let self else { return }
+            let alert = NSAlert()
+            alert.messageText = "이 요약을 지울까요?"
+            // ⚠️ 이쪽은 정말로 사라진다. 요약과 원문이 이 기록 안에만 있다.
+            alert.informativeText = "\(record.title)\n\n요약과 받아쓴 원문이 함께 지워집니다. 되돌릴 수 없습니다."
+            alert.addButton(withTitle: "지우기")
+            alert.addButton(withTitle: "취소")
+            NSApp.activate(ignoringOtherApps: true)
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            HistoryStore.remove(id: record.id)
+            self.model.history = HistoryStore.load()
         }
         model.actions.makeMeetingNotesFrom = { [weak self] url in
             self?.ensureModelThenMakeNotes(for: url)
@@ -1460,11 +1564,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                             action: #selector(pickGeminiModel(_:)))
         case .apple:
             break
-        case .api, .cli:
+        case .api:
             addRadioSubmenu(to: menu, title: "Claude 모델",
                             items: Prefs.models,
                             selected: Prefs.models.firstIndex(of: Prefs.model) ?? 0,
                             action: #selector(pickModel(_:)))
+        case .openai:
+            addRadioSubmenu(to: menu, title: "ChatGPT 모델",
+                            items: Prefs.openaiModels,
+                            selected: Prefs.openaiModels.firstIndex(of: Prefs.openaiModel) ?? 0,
+                            action: #selector(pickOpenAIModel(_:)))
         }
 
         menu.addItem(.separator())
@@ -1498,10 +1607,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let note = NSMenuItem(title: "   ↳ \(AppleClient.availability().note)", action: nil, keyEquivalent: "")
             note.isEnabled = false
             menu.addItem(note)
-        case .api, .cli:
+        case .api:
             let keyItem = NSMenuItem(title: "Claude API 키 설정…", action: #selector(setAPIKey), keyEquivalent: "")
             keyItem.target = self
             menu.addItem(keyItem)
+        case .openai:
+            let keyItem = NSMenuItem(title: "ChatGPT API 키 설정…", action: #selector(setOpenAIKey), keyEquivalent: "")
+            keyItem.target = self
+            menu.addItem(keyItem)
+            if KeychainStore.read(.openai)?.isEmpty != false {
+                let hint = NSMenuItem(title: "   ↳ platform.openai.com/api-keys 에서 발급 (ChatGPT 구독과 별도 과금)",
+                                      action: nil, keyEquivalent: "")
+                hint.isEnabled = false
+                menu.addItem(hint)
+            }
         }
 
         menu.addItem(.separator())
@@ -1511,10 +1630,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         for (title, sel) in [("붙여넣기 테스트", #selector(testPaste)),
                              ("AI 모델 연결 테스트", #selector(testClaude)),
                              ("Gemini 모델 목록", #selector(listGeminiModels)),
-                             ("Claude Code CLI 확인", #selector(checkCLI)),
-                             ("CLI 경로 직접 지정…", #selector(setCLIPath)),
                              ("받아쓰기 설정 열기", #selector(openDictationSettings)),
-                             ("CLI 플래그 캐시 초기화", #selector(resetCLIFlags)),
                              ("로그 열기", #selector(openLog)),
                              ("현재 상태 진단", #selector(showDiagnostics))] {
             let item = NSMenuItem(title: title, action: sel, keyEquivalent: "")
@@ -1593,6 +1709,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     @objc private func pickGeminiModel(_ sender: NSMenuItem) {
         Prefs.geminiModel = Prefs.geminiModels[sender.tag]
         setState(state, message: "Gemini 모델: \(Prefs.geminiModel)")
+    }
+
+    @objc private func pickOpenAIModel(_ sender: NSMenuItem) {
+        Prefs.openaiModel = Prefs.openaiModels[sender.tag]
+        setState(state, message: "ChatGPT 모델: \(Prefs.openaiModel)")
+    }
+
+    @objc private func setOpenAIKey() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "ChatGPT API 키"
+        // ⚠️ 이걸 꼭 적는다. ChatGPT 구독료를 내고 있으면 API 도 포함이라고 생각하기 쉽다.
+        alert.informativeText = """
+            platform.openai.com/api-keys 에서 발급받습니다.
+
+            ChatGPT 구독(Plus 등)과 요금이 **따로 나갑니다.** 구독 중이어도 API 는 쓴 만큼
+            별도로 청구되니, 결제 수단을 등록해야 씁니다.
+            """
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        field.stringValue = KeychainStore.read(.openai) ?? ""
+        field.placeholderString = "sk-…"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "저장")
+        alert.addButton(withTitle: "취소")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let key = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        KeychainStore.write(key, to: .openai)
+        setState(state, message: key.isEmpty ? "ChatGPT 키를 지웠습니다." : "ChatGPT 키를 저장했습니다.")
     }
 
     @objc private func setGeminiKey() {
@@ -2082,6 +2226,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     /// 녹음 파일 옆에 둔다. 앱 안 어딘가에 숨겨 두면 사용자가 찾지 못한다.
+    /// 이름을 묻는 작은 창. 회의록과 요약이 같이 쓴다.
+    /// - Returns: 새 이름. 취소했거나 비워 뒀으면 nil.
+    private func askName(title: String, note: String?, current: String) -> String? {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = title
+        if let note { alert.informativeText = note }
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        field.stringValue = current
+        alert.accessoryView = field
+        alert.addButton(withTitle: "바꾸기")
+        alert.addButton(withTitle: "취소")
+        // 창이 뜨자마자 글자가 잡혀 있어야 바로 고쳐 쓸 수 있다.
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? nil : name
+    }
+
     /// 받아쓰기가 끝나는 **즉시** 원문을 녹음 옆에 떨군다. 요약을 부르기 전이다.
     ///
     /// ⚠️ 이 한 줄이 없어서 2026-09-29 에 48분 회의를 잃을 뻔했다. 요약이 503 으로 죽자
@@ -2257,51 +2420,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    @objc private func checkCLI() {
-        setState(state, message: "CLI 확인 중…")
-        CLIClient.shared.status { info in
-            DispatchQueue.main.async {
-                Log.write("CLI 상태\n\(info)")
-                NSApp.activate(ignoringOtherApps: true)
-                let alert = NSAlert()
-                alert.messageText = "Claude Code CLI"
-                alert.informativeText = info
-                alert.addButton(withTitle: "복사")
-                alert.addButton(withTitle: "닫기")
-                if alert.runModal() == .alertFirstButtonReturn {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(info, forType: .string)
-                }
-                self.setState(.idle, message: "준비됨")
-            }
-        }
-    }
 
-    @objc private func setCLIPath() {
-        NSApp.activate(ignoringOtherApps: true)
-        let alert = NSAlert()
-        alert.messageText = "claude 실행 파일 경로"
-        alert.informativeText = "터미널에서 `which claude`로 확인한 경로를 넣으세요. 비워 두면 자동으로 찾습니다."
-        alert.addButton(withTitle: "저장")
-        alert.addButton(withTitle: "취소")
 
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 380, height: 24))
-        field.placeholderString = CLIClient.resolveExecutable() ?? "/Users/이름/.local/bin/claude"
-        field.stringValue = Prefs.cliPath ?? ""
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-
-        if alert.runModal() == .alertFirstButtonReturn {
-            let path = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            Prefs.cliPath = path.isEmpty ? nil : path
-            setState(.idle, message: "CLI 경로: \(CLIClient.resolveExecutable() ?? "못 찾음")")
-        }
-    }
-
-    @objc private func resetCLIFlags() {
-        Prefs.unsupportedCLIFlags = []
-        setState(.idle, message: "CLI 플래그 캐시를 지웠습니다. 다음 호출에서 다시 탐색합니다.")
-    }
 
     @objc private func openLog() {
         NSWorkspace.shared.open(Log.url)
@@ -2321,7 +2441,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             Gemini 키 저장됨: \(KeychainStore.read(.gemini)?.isEmpty == false)
             Gemini 모델: \(Prefs.geminiModel)
             Anthropic 키 저장됨: \(KeychainStore.read(.anthropic)?.isEmpty == false)
-            claude CLI 경로: \(CLIClient.resolveExecutable() ?? "못 찾음")
             Claude 모델: \(Prefs.model)
             로그: \(Log.url.path)
             """

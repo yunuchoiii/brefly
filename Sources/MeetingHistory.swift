@@ -71,6 +71,52 @@ enum MeetingHistoryStore {
         }
     }
 
+    /// 이름을 바꾼다. **`.md` 파일 이름도 같이 바꾼다** — 목록과 파일 이름이 갈리면
+    /// Finder 에서 열었을 때 어느 것이 그것인지 알 수 없다.
+    /// 파일을 못 옮기면(이미 있는 이름 등) 목록 이름만 바꾸고 경로는 그대로 둔다.
+    /// - Returns: 바뀐 기록. 그런 기록이 없으면 nil.
+    @discardableResult
+    static func rename(notesPath: String, to newTitle: String) -> MeetingRecord? {
+        var list = load()
+        guard let i = list.firstIndex(where: { $0.notesPath == notesPath }) else { return nil }
+        let old = list[i]
+        let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        var path = old.notesPath
+        let source = URL(fileURLWithPath: old.notesPath)
+        // 파일 이름에 쓸 수 없는 글자를 걷어낸다. `/` 가 들어가면 엉뚱한 폴더를 가리킨다.
+        let safe = trimmed.replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+        let target = source.deletingLastPathComponent().appendingPathComponent("\(safe) 회의록.md")
+        if target != source, !FileManager.default.fileExists(atPath: target.path) {
+            do {
+                try FileManager.default.moveItem(at: source, to: target)
+                path = target.path
+            } catch {
+                Log.write("회의록 파일 이름 바꾸기 실패 — 목록 이름만 바꿈: \(error.localizedDescription)")
+            }
+        }
+        let renamed = MeetingRecord(id: old.id, title: trimmed, date: old.date, kind: old.kind,
+                                    seconds: old.seconds, todoCount: old.todoCount,
+                                    notesPath: path, audioPath: old.audioPath)
+        list[i] = renamed
+        save(list)
+        return renamed
+    }
+
+    /// 목록에서만 뺀다. **녹음과 `.md` 파일은 건드리지 않는다** —
+    /// 녹음은 다시 만들 수 없는 것이라 목록에서 지운다고 같이 지우면 안 된다.
+    static func forget(notesPath: String) {
+        save(load().filter { $0.notesPath != notesPath })
+    }
+
+    private static func save(_ list: [MeetingRecord]) {
+        if let data = try? JSONEncoder().encode(Array(list.prefix(limit))) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+
     /// 다시 요약해서 "할 일" 개수가 달라졌을 때. 목록에 옛 숫자가 남으면 안 된다.
     static func updateTodos(notesPath: String, count: Int) {
         var list = load()
