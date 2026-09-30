@@ -121,7 +121,9 @@ struct IdleView: View {
                             ForEach(model.history.prefix(3)) { record in
                                 HistoryRow(record: record,
                                            open: { model.rawExpanded = false; model.phase = .done(record, .viewing) },
-                                           copy: { model.actions.copy(record) })
+                                           copy: { model.actions.copy(record) },
+                                           rename: { model.actions.renameSummary(record) },
+                                           remove: { model.actions.removeSummary(record) })
                             }
                             Spacer().frame(height: 6)
                         }
@@ -152,6 +154,9 @@ struct HistoryRow: View {
     let record: SummaryRecord
     let open: () -> Void
     let copy: () -> Void
+    /// 오른쪽 클릭 메뉴. 회의록 목록과 같은 방식이다.
+    var rename: (() -> Void)? = nil
+    var remove: (() -> Void)? = nil
     @State private var hover = false
 
     var meta: String {
@@ -174,6 +179,16 @@ struct HistoryRow: View {
             .help("요약 복사")
         }
         .padding(.horizontal, 16).padding(.vertical, 7)
+        .contextMenu {
+            if let rename { Button("이름 바꾸기…") { rename() } }
+            Button("요약 복사") { copy() }
+            if let remove {
+                Divider()
+                // ⚠️ 여기는 정말로 지운다. 요약과 원문이 이 기록 안에만 있어서 되돌릴 수 없다.
+                //    회의록의 "목록에서 지우기"와 다르다 — 그쪽은 파일이 따로 남는다.
+                Button("지우기") { remove() }
+            }
+        }
         .background(hover ? Color.fill : Color.clear)
         .contentShape(Rectangle())
         .onTapGesture(perform: open)
@@ -505,7 +520,9 @@ struct HistoryView: View {
                                            model.phase = .done(record, .viewing)
                                            model.screen = .main
                                        },
-                                       copy: { model.actions.copy(record) })
+                                       copy: { model.actions.copy(record) },
+                                       rename: { model.actions.renameSummary(record) },
+                                       remove: { model.actions.removeSummary(record) })
                         }
                     }
                     .padding(.vertical, 6)
@@ -904,6 +921,18 @@ struct MeetingTabView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        // 오른쪽 클릭으로 이름을 고치고 목록에서 뺀다. 줄마다 버튼을 달면
+                        // 두 줄짜리 항목이 더 빽빽해진다.
+                        .contextMenu {
+                            Button("이름 바꾸기…") { model.actions.renameMeeting(record) }
+                            Button("Finder에서 보기") {
+                                NSWorkspace.shared.activateFileViewerSelecting([record.notesFile])
+                            }
+                            Divider()
+                            // ⚠️ 이름을 분명히 한다. "삭제" 라고만 하면 녹음까지 지운 줄 안다.
+                            //    녹음은 다시 만들 수 없어서 여기서는 목록에서만 뺀다.
+                            Button("목록에서 지우기") { model.actions.forgetMeeting(record) }
+                        }
                     }
                 }
             }

@@ -143,6 +143,27 @@ if let i = CommandLine.arguments.firstIndex(of: "--render-menubar"), i + 1 < Com
     exit(0)
 }
 
+// 진단용: 목록 이름 바꾸기·지우기가 실제로 먹는지 본다. 창을 띄우지 않고 저장소만 만진다.
+if let i = CommandLine.arguments.firstIndex(of: "--history-test") {
+    let mode = i + 1 < CommandLine.arguments.count ? CommandLine.arguments[i + 1] : "show"
+    func show(_ tag: String) {
+        print("[\(tag)] 회의록 \(MeetingHistoryStore.load().count)건")
+        for r in MeetingHistoryStore.load().prefix(3) {
+            print("   \(r.title)  ←  \((r.notesPath as NSString).lastPathComponent)")
+        }
+    }
+    show("지금")
+    if mode == "rename", let first = MeetingHistoryStore.load().first {
+        let newName = "이름바꾸기시험 " + UUID().uuidString.prefix(4)
+        print("\n→ \"\(first.title)\" 를 \"\(newName)\" 로 바꾼다")
+        let r = MeetingHistoryStore.rename(notesPath: first.notesPath, to: String(newName))
+        print("   파일도 옮겨졌나: \(FileManager.default.fileExists(atPath: r?.notesPath ?? "") ? "예" : "아니오")")
+        print("   새 경로: \((r?.notesPath as NSString?)?.lastPathComponent ?? "?")")
+        show("뒤")
+    }
+    exit(0)
+}
+
 // 진단용: 넣어 둔 키가 실제로 쓸 수 있는지 하나씩 확인한다.
 // ⚠️ 콜백이 메인 큐로 오므로 세마포어로 막으면 교착된다. 런루프를 돌리며 기다린다
 //    (`--check-update` 와 같은 이유).
@@ -1226,6 +1247,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             self?.popover.performClose(nil)
             self?.openMeetingRecord(record)
         }
+        model.actions.renameMeeting = { [weak self] record in
+            guard let self else { return }
+            guard let name = self.askName(title: "회의록 이름 바꾸기",
+                                          note: "목록과 .md 파일 이름이 함께 바뀝니다.",
+                                          current: record.title) else { return }
+            MeetingHistoryStore.rename(notesPath: record.notesPath, to: name)
+            self.model.meetingHistory = MeetingHistoryStore.load()
+        }
+        model.actions.forgetMeeting = { [weak self] record in
+            guard let self else { return }
+            let alert = NSAlert()
+            alert.messageText = "목록에서 지울까요?"
+            // ⚠️ 녹음은 다시 만들 수 없다. 여기서 지우는 것이 무엇인지 분명히 말한다.
+            alert.informativeText = "\(record.title)\n\n목록에서만 사라집니다. "
+                + "녹음과 회의록 .md 파일은 그대로 남습니다."
+            alert.addButton(withTitle: "목록에서 지우기")
+            alert.addButton(withTitle: "취소")
+            NSApp.activate(ignoringOtherApps: true)
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            MeetingHistoryStore.forget(notesPath: record.notesPath)
+            self.model.meetingHistory = MeetingHistoryStore.load()
+        }
+        model.actions.renameSummary = { [weak self] record in
+            guard let self else { return }
+            guard let name = self.askName(title: "요약 이름 바꾸기", note: nil,
+                                          current: record.title) else { return }
+            HistoryStore.rename(id: record.id, to: name)
+            self.model.history = HistoryStore.load()
+        }
+        model.actions.removeSummary = { [weak self] record in
+            guard let self else { return }
+            let alert = NSAlert()
+            alert.messageText = "이 요약을 지울까요?"
+            // ⚠️ 이쪽은 정말로 사라진다. 요약과 원문이 이 기록 안에만 있다.
+            alert.informativeText = "\(record.title)\n\n요약과 받아쓴 원문이 함께 지워집니다. 되돌릴 수 없습니다."
+            alert.addButton(withTitle: "지우기")
+            alert.addButton(withTitle: "취소")
+            NSApp.activate(ignoringOtherApps: true)
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            HistoryStore.remove(id: record.id)
+            self.model.history = HistoryStore.load()
+        }
         model.actions.makeMeetingNotesFrom = { [weak self] url in
             self?.ensureModelThenMakeNotes(for: url)
         }
@@ -2147,6 +2210,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     /// 녹음 파일 옆에 둔다. 앱 안 어딘가에 숨겨 두면 사용자가 찾지 못한다.
+    /// 이름을 묻는 작은 창. 회의록과 요약이 같이 쓴다.
+    /// - Returns: 새 이름. 취소했거나 비워 뒀으면 nil.
+    private func askName(title: String, note: String?, current: String) -> String? {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = title
+        if let note { alert.informativeText = note }
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        field.stringValue = current
+        alert.accessoryView = field
+        alert.addButton(withTitle: "바꾸기")
+        alert.addButton(withTitle: "취소")
+        // 창이 뜨자마자 글자가 잡혀 있어야 바로 고쳐 쓸 수 있다.
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? nil : name
+    }
+
     /// 받아쓰기가 끝나는 **즉시** 원문을 녹음 옆에 떨군다. 요약을 부르기 전이다.
     ///
     /// ⚠️ 이 한 줄이 없어서 2026-09-29 에 48분 회의를 잃을 뻔했다. 요약이 503 으로 죽자
