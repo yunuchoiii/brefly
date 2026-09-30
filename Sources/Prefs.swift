@@ -286,10 +286,10 @@ enum Prefs {
 
     /// 회의록 요약은 받아쓰기와 **따로** 고른다. 받아쓰기는 빠른 게 중요하고
     /// 회의록은 잘 뽑는 게 중요해서 최적해가 다르다.
-    /// ⚠️ 기본값은 Gemini 정확 쪽이다. 0.8.2 까지 회의록은 설정을 안 보고 Gemini 로만 갔으므로
-    ///    회사를 바꾸면 쓰던 사람의 결과가 말없이 달라진다.
+    /// 기본값은 AUTO 다. AUTO 도 가성비 순이라 **Gemini 부터** 시도하므로 0.8.2 까지의
+    /// 동작(Gemini 고정)과 첫 결과가 같고, Gemini 가 다 실패했을 때만 다른 회사로 넘어간다.
     static var meetingBackend: Backend {
-        get { Backend(rawValue: d.string(forKey: "meetingBackend") ?? "") ?? .gemini }
+        get { Backend(rawValue: d.string(forKey: "meetingBackend") ?? "") ?? .auto }
         set { d.set(newValue.rawValue, forKey: "meetingBackend") }
     }
 

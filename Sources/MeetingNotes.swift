@@ -320,17 +320,41 @@ enum MeetingNotes {
     /// ⚠️ 0.8.2 까지는 설정을 아예 안 보고 Gemini 로만 갔다.
     private static func summarize(_ transcript: String, speakersKnown: Bool = false,
                                   completion: @escaping (Swift.Result<String, Error>) -> Void) {
-        // AUTO 면 키가 있는 회사 중 **잘 뽑는 순서**로 고른다. 하나도 없으면 Gemini 를 시도해
-        // "키가 없습니다" 안내가 나가게 둔다 — 조용히 아무 일도 안 하는 것보다 낫다.
-        let chosen = Prefs.meetingBackend == .auto
-            ? (Prefs.autoCandidates(for: .meeting).first
-               ?? Prefs.Choice(backend: .gemini, tier: .quality))
-            : Prefs.meetingChoice
+        // AUTO 면 키가 있는 회사를 **가성비 순으로 줄 세워** 차례로 시도한다.
+        // 하나도 없으면 Gemini 를 시도해 "키가 없습니다" 안내가 나가게 둔다 —
+        // 조용히 아무 일도 안 하는 것보다 낫다.
+        //
+        // ⚠️ 전에는 이 목록에서 `.first` 하나만 꺼내 썼다. 그래서 Gemini 가 다 실패하면
+        //    ChatGPT·Claude 키가 있어도 그냥 실패했다. 회의록은 받아쓰기에 4~5분을 쓴 뒤라
+        //    거기서 포기하면 그 시간이 날아간다. 회사를 넘어가는 것이 안전망으로 값어치가 크다.
+        let chain: [Prefs.Choice] = Prefs.meetingBackend == .auto
+            ? (Prefs.autoCandidates(for: .meeting).isEmpty
+               ? [Prefs.Choice(backend: .gemini, tier: .quality)]
+               : Prefs.autoCandidates(for: .meeting))
+            : [Prefs.meetingChoice]
+        Log.write("회의록 요약 차례: " + chain.map(\.title).joined(separator: " → "))
+        tryChoice(transcript, speakersKnown: speakersKnown, chain: chain, index: 0, completion: completion)
+    }
+
+    /// 회사를 하나씩 내려가며 시도한다. 한 회사 안에서는 `attempt` 가 모델과 재시도를 맡는다.
+    private static func tryChoice(_ transcript: String, speakersKnown: Bool,
+                                  chain: [Prefs.Choice], index: Int,
+                                  completion: @escaping (Swift.Result<String, Error>) -> Void) {
+        let chosen = chain[index]
         let models = Prefs.modelNames(chosen.backend, chosen.tier)
         Log.write("회의록 요약: \(chosen.backend.shortTitle) \(chosen.tier.suffix) — \(models.first ?? "?")")
         attempt(transcript, speakersKnown: speakersKnown,
                 backend: chosen.backend, models: models.isEmpty ? [Prefs.geminiModel] : models,
-                modelIndex: 0, tryIndex: 0, completion: completion)
+                modelIndex: 0, tryIndex: 0) { result in
+            if case .failure(let error) = result, index + 1 < chain.count {
+                Log.write("회의록 \(chosen.backend.shortTitle) 실패 — \(chain[index + 1].title) 로 넘어감: "
+                          + error.localizedDescription.prefix(80))
+                tryChoice(transcript, speakersKnown: speakersKnown,
+                          chain: chain, index: index + 1, completion: completion)
+                return
+            }
+            completion(result)
+        }
     }
 
     /// 같은 모델로 `retryDelays` 만큼 물러서며 다시 걸고, 다 쓰면 다음 모델로 넘어간다.
