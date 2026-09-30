@@ -315,22 +315,31 @@ enum MeetingNotes {
     ///    같은 모델로 먼저 기다렸다 다시 건다 — 503 은 대개 잠깐이다.
     private static let retryDelays: [Double] = [2, 6, 15]
 
+    /// 회의록은 **받아쓰기와 따로 고른 모델**로 요약한다. 받아쓰기는 커서에 바로 들어가야 해서
+    /// 속도가 먼저고, 회의록은 이미 받아쓰기에 2~5분을 썼으니 잘 뽑는 게 먼저다.
+    /// ⚠️ 0.8.2 까지는 설정을 아예 안 보고 Gemini 로만 갔다.
     private static func summarize(_ transcript: String, speakersKnown: Bool = false,
                                   completion: @escaping (Swift.Result<String, Error>) -> Void) {
-        // 고른 모델을 먼저, 그다음 보조 모델을 겹치지 않게. 무료 키는 모델당 하루 20회라
-        // 순서가 중요하다 — 늘 쓰던 것이 바닥났을 때 다른 것이 받아 준다.
-        var models = [Prefs.geminiModel]
-        for m in Prefs.geminiFallbacks where !models.contains(m) { models.append(m) }
-        attempt(transcript, speakersKnown: speakersKnown, models: models, modelIndex: 0, tryIndex: 0,
-                completion: completion)
+        // AUTO 면 키가 있는 회사 중 **잘 뽑는 순서**로 고른다. 하나도 없으면 Gemini 를 시도해
+        // "키가 없습니다" 안내가 나가게 둔다 — 조용히 아무 일도 안 하는 것보다 낫다.
+        let chosen = Prefs.meetingBackend == .auto
+            ? (Prefs.autoCandidates(for: .meeting).first
+               ?? Prefs.Choice(backend: .gemini, tier: .quality))
+            : Prefs.meetingChoice
+        let models = Prefs.modelNames(chosen.backend, chosen.tier)
+        Log.write("회의록 요약: \(chosen.backend.shortTitle) \(chosen.tier.suffix) — \(models.first ?? "?")")
+        attempt(transcript, speakersKnown: speakersKnown,
+                backend: chosen.backend, models: models.isEmpty ? [Prefs.geminiModel] : models,
+                modelIndex: 0, tryIndex: 0, completion: completion)
     }
 
     /// 같은 모델로 `retryDelays` 만큼 물러서며 다시 걸고, 다 쓰면 다음 모델로 넘어간다.
     private static func attempt(_ transcript: String, speakersKnown: Bool,
-                                models: [String], modelIndex: Int, tryIndex: Int,
+                                backend: Prefs.Backend, models: [String],
+                                modelIndex: Int, tryIndex: Int,
                                 completion: @escaping (Swift.Result<String, Error>) -> Void) {
         let model = models[min(modelIndex, models.count - 1)]
-        callGemini(transcript, speakersKnown: speakersKnown, model: model) { result in
+        call(transcript, speakersKnown: speakersKnown, backend: backend, model: model) { result in
             switch result {
             case .success:
                 if modelIndex > 0 || tryIndex > 0 { Log.write("요약 성공 — \(model), \(tryIndex + 1)번째 시도") }
@@ -341,14 +350,14 @@ enum MeetingNotes {
                     let wait = retryDelays[tryIndex]
                     Log.write("요약 재시도 — \(model), \(wait)초 뒤 (\(error.localizedDescription.prefix(60)))")
                     DispatchQueue.global().asyncAfter(deadline: .now() + wait) {
-                        attempt(transcript, speakersKnown: speakersKnown, models: models,
+                        attempt(transcript, speakersKnown: speakersKnown, backend: backend, models: models,
                                 modelIndex: modelIndex, tryIndex: tryIndex + 1, completion: completion)
                     }
                     return
                 }
                 if modelIndex + 1 < models.count {
                     Log.write("요약 모델 바꿈 — \(model) → \(models[modelIndex + 1])")
-                    attempt(transcript, speakersKnown: speakersKnown, models: models,
+                    attempt(transcript, speakersKnown: speakersKnown, backend: backend, models: models,
                             modelIndex: modelIndex + 1, tryIndex: 0, completion: completion)
                     return
                 }
@@ -366,6 +375,31 @@ enum MeetingNotes {
         if case Failure.emptyAnswer = error { return false }
         // 시간 초과·연결 끊김 같은 네트워크 오류는 다시 걸어 본다.
         return (error as NSError).domain == NSURLErrorDomain
+    }
+
+    /// 고른 회사로 보낸다. 회의록은 글이 길어서(48분이면 4만 자) 받아쓰기 쪽 클라이언트를
+    /// 그대로 쓰지 않는다 — 거기는 출력이 2048 토큰으로 묶여 있어 중간에 잘린다.
+    private static func call(_ transcript: String, speakersKnown: Bool,
+                             backend: Prefs.Backend, model: String,
+                             completion: @escaping (Swift.Result<String, Error>) -> Void) {
+        let system = (speakersKnown ? speakerNote : "") + instruction
+        let user = "<회의록>\n\(transcript)\n</회의록>"
+        switch backend {
+        case .openai:
+            // ⚠️ 넉넉히 준다. 추론 모델은 **생각에 토큰을 먼저 쓴다** — 2026-09-30 실측에서
+            //    48분 회의에 3,000 을 주니 2,048 을 생각에 쓰고 본문이 **비어서** 왔다.
+            //    실제 소모는 3,365 였다. 예약이 커도 쓴 만큼만 청구되니 크게 잡는다.
+            GPTClient.shared.send(system: system, user: user, model: model,
+                                  maxTokens: 16000, timeout: 300) { completion($0.map(tidy)) }
+        case .api:
+            // ⚠️ OpenAI 와 같은 이유로 넉넉히 준다. Claude 도 `thinking` 블록이 먼저 나오고
+            //    그게 `max_tokens` 를 먹는다 — 2026-09-30 실측에서 8,192 중 **6,374 가 생각**이었고,
+            //    앱에서 돌렸을 땐 생각하다 한도에 걸려 본문이 0자로 왔다.
+            ClaudeClient.shared.raw(system: system, user: user, model: model,
+                                    maxTokens: 24000, timeout: 300) { completion($0.map(tidy)) }
+        default:
+            callGemini(transcript, speakersKnown: speakersKnown, model: model, completion: completion)
+        }
     }
 
     private static func callGemini(_ transcript: String, speakersKnown: Bool, model: String,
