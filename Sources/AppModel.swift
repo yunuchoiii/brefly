@@ -132,6 +132,13 @@ final class AppModel: ObservableObject {
         var makeMeetingNotesFrom: (URL) -> Void = { _ in }
         /// 만들어 둔 회의록을 다시 연다.
         var openMeeting: (MeetingRecord) -> Void = { _ in }
+        /// 목록에서 오른쪽 클릭 → 이름 바꾸기. 창을 띄워야 해서 앱 쪽에서 받는다.
+        var renameMeeting: (MeetingRecord) -> Void = { _ in }
+        /// 목록에서 오른쪽 클릭 → 목록에서 지우기. 녹음 파일은 건드리지 않는다.
+        var forgetMeeting: (MeetingRecord) -> Void = { _ in }
+        /// 받아쓰기 기록 오른쪽 클릭 → 이름 바꾸기 / 지우기.
+        var renameSummary: (SummaryRecord) -> Void = { _ in }
+        var removeSummary: (SummaryRecord) -> Void = { _ in }
         var cancelMeetingNotes: () -> Void = {}
         /// 지금부터 회의를 녹음한다. 대면은 마이크만, 화상은 스피커 소리까지 잡는다.
         var startMeetingInPerson: () -> Void = {}

@@ -31,6 +31,22 @@ enum HistoryStore {
         }
     }
 
+    /// 목록에서 이름을 바꾼다. 요약은 글자만 있으므로 파일을 옮길 일이 없다 —
+    /// 회의록(`MeetingHistoryStore.rename`)은 `.md` 파일도 같이 옮겨야 해서 다르다.
+    static func rename(id: UUID, to newTitle: String) {
+        let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        var list = load()
+        guard let i = list.firstIndex(where: { $0.id == id }) else { return }
+        list[i].title = trimmed
+        save(list)
+    }
+
+    /// 기록 하나를 지운다. 요약과 원문이 이 안에만 있으므로 **되돌릴 수 없다.**
+    static func remove(id: UUID) {
+        save(load().filter { $0.id != id })
+    }
+
     /// 요약 첫 문장에서 제목을 뽑는다. LLM을 한 번 더 부르지 않는다.
     static func makeTitle(from summary: String) -> String {
         // 요약 스타일은 "주제: 내용" 불릿이 많다. 첫 불릿을 제목으로 쓰면 바로 아래 첫 불릿과 똑같이 두 번 보여서
