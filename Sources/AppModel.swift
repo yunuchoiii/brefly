@@ -73,6 +73,11 @@ final class AppModel: ObservableObject {
     /// 기록에서 꺼내 본 것에는 채우지 않는다 — 그건 사용자가 일부러 연 것이라 저절로 닫히면 안 된다.
     @Published var resultShownAt: Date?
 
+    /// 지금 중요 표시가 켜져 있나. 녹음 화면에 드러낸다 — 켜 둔 줄 모르면 끄지도 못한다.
+    @Published var highlightOn = false
+    /// 이번 녹음에서 표시한 대목 수.
+    @Published var highlightCount = 0
+
     enum Screen {
         case main
         case history

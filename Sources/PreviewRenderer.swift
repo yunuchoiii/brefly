@@ -159,7 +159,9 @@ enum PreviewRenderer {
             notesFile: URL(fileURLWithPath: "/Users/me/문서/회의/주간 기획 회의 회의록.md"),
             recordedAt: Date(), duration: 2112, notes: sampleNotes, segments: labelled,
             transcript: labelled.map { "\($0.speaker ?? ""): \($0.text)" }.joined(separator: "\n"),
-            speakersKnown: true)
+            speakersKnown: true,
+            usedModel: ("ChatGPT", "gpt-5.5"),
+            highlightCount: 3)
         // 요약만 실패한 모습. 이 화면이 없으면 사용자는 다 잃은 줄 안다.
         var failedDoc = sampleDoc
         failedDoc.summaryFailed = "요약에 실패했습니다 (503). This model is currently experiencing high demand."

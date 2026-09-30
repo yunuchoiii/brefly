@@ -17,6 +17,10 @@ struct MeetingDocument {
     var speakersKnown: Bool = false
     /// 요약이 실패한 채로 저장됐으면 그 까닭. 있으면 창 위에 띠와 '다시 요약'이 뜬다.
     var summaryFailed: String? = nil
+    /// 어느 AI 가 뽑았는지. AUTO 는 회사를 오가므로 결과만 보고는 알 수 없다.
+    var usedModel: (label: String, name: String)? = nil
+    /// 녹음 중에 사용자가 찍은 중요 대목 수.
+    var highlightCount: Int = 0
 
     var dateText: String {
         let f = DateFormatter()
@@ -243,6 +247,7 @@ struct MeetingResultView: View {
                     document.notes = notes
                     document.summaryFailed = nil
                     lastSummary = notes
+                    document.usedModel = MeetingNotes.lastUsedModel
                     try? notes.write(to: document.notesFile, atomically: true, encoding: .utf8)
                     // 목록의 "할 일 n개"가 옛 숫자로 남으면 안 된다.
                     MeetingHistoryStore.updateTodos(notesPath: document.notesFile.path,
@@ -307,6 +312,10 @@ struct MeetingResultView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(20)
+                    // ⚠️ SwiftUI 의 `Text` 는 기본이 **선택 불가**다. 팝오버 쪽에는 걸어 뒀는데
+                    //    이 창만 빠져서, 회의록을 읽다가 한 대목만 긁어 갈 수가 없었다.
+                    //    복사 버튼은 전체만 준다.
+                    .textSelection(.enabled)
                 }
             }
             HairLine().frame(width: 1).frame(maxHeight: .infinity)
@@ -331,6 +340,18 @@ struct MeetingResultView: View {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(document.notes, forType: .string)
                         flash("회의록을 클립보드에 복사했습니다.")
+                    }
+                }
+                // 어느 AI 가 뽑았는지 보여 준다. AUTO 가 회사를 오가게 되면서
+                // 결과만 보고는 알 수 없어졌다 — 품질이 다르면 원인을 여기서 찾는다.
+                if let used = document.usedModel {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("요약 정보").font(.system(size: 11, weight: .bold)).foregroundColor(.text3)
+                        infoRow("AI", used.label)
+                        infoRow("모델", used.name)
+                        if document.highlightCount > 0 {
+                            infoRow("중요 표시", "\(document.highlightCount)곳")
+                        }
                     }
                 }
                 VStack(alignment: .leading, spacing: 8) {
@@ -369,9 +390,10 @@ struct MeetingResultView: View {
 
     private func infoRow(_ label: String, _ value: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
-            Text(label).font(.system(size: 11.5)).foregroundColor(.text3).frame(width: 34, alignment: .leading)
+            Text(label).font(.system(size: 11.5)).foregroundColor(.text3).frame(width: 52, alignment: .leading)
             Text(value).font(.system(size: 11.5)).foregroundColor(.ink)
                 .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
         }
     }
 
@@ -403,6 +425,7 @@ struct MeetingResultView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(20)
+            .textSelection(.enabled)
         }
     }
 

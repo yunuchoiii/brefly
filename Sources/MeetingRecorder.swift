@@ -36,6 +36,50 @@ final class MeetingRecorder {
     private(set) var micBuffers = 0
     private(set) var systemBuffers = 0
 
+    // MARK: - 하이라이트
+
+    /// 사용자가 "여기 중요하다"고 찍은 구간(녹음 시작 기준 초). 요약할 때 모델에 짚어 준다.
+    /// 받아쓴 글 전체를 넘기면 무엇이 중요한지는 모델이 **짐작**한다. 그 자리에서 찍어 주면
+    /// 짐작이 아니라 사실이 된다.
+    private(set) var highlights: [(start: Double, end: Double)] = []
+    /// 아직 안 끝난 구간의 시작 시각. 켜져 있으면 녹음 화면에 표시한다.
+    private(set) var highlightStartedAt: Double?
+
+    var isHighlighting: Bool { highlightStartedAt != nil }
+
+    /// 녹음 시작 뒤 지금까지 몇 초인지. 하이라이트 시각의 기준이다.
+    var elapsed: Double { session.map { Date().timeIntervalSince($0.startedAt) } ?? 0 }
+
+    /// 켜고 끈다. 녹음 중이 아니면 아무 일도 하지 않는다.
+    /// - Returns: 이번에 켜졌으면 true, 꺼졌으면 false.
+    @discardableResult
+    func toggleHighlight() -> Bool {
+        guard session != nil else { return false }
+        if let start = highlightStartedAt {
+            let end = elapsed
+            // 너무 짧으면 잘못 누른 것으로 본다. 0.5초짜리 구간은 받아쓰기 한 낱말도 못 덮는다.
+            if end - start >= 0.5 { highlights.append((start, end)) }
+            highlightStartedAt = nil
+            Log.write("하이라이트 끝 — \(String(format: "%.1f~%.1f초", start, end))")
+            return false
+        }
+        highlightStartedAt = elapsed
+        Log.write("하이라이트 시작 — \(String(format: "%.1f초", elapsed))")
+        return true
+    }
+
+    /// 녹음을 끝낼 때 열려 있는 구간을 닫는다. 끄는 걸 잊어도 표시가 사라지지 않게 한다.
+    /// - Returns: 닫아 준 것이 있으면 true. 부르는 쪽이 그걸로 안내를 띄운다.
+    @discardableResult
+    func closeOpenHighlight() -> Bool {
+        guard let start = highlightStartedAt else { return false }
+        let end = elapsed
+        if end - start >= 0.5 { highlights.append((start, end)) }
+        highlightStartedAt = nil
+        Log.write("⚠️ 하이라이트를 끄지 않은 채 녹음이 끝나 자동으로 닫음 — \(String(format: "%.1f~%.1f초", start, end))")
+        return true
+    }
+
     /// 마지막으로 읽은 뒤의 가장 큰 소리. 화면이 10분의 1초마다 가져가면서 0 으로 되돌린다.
     /// ⚠️ 오디오 스레드가 쓰고 화면 스레드가 읽으므로 자물쇠가 필요하다.
     private let levelLock = NSLock()

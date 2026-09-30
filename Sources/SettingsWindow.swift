@@ -99,6 +99,9 @@ final class SettingsModel: ObservableObject {
 
     private func changed() { NotificationCenter.default.post(name: .breflyPrefsChanged, object: nil) }
 
+    /// 회의 단축키가 바뀌었을 때. 화면을 다시 그리고 앱에 다시 등록시킨다.
+    func bumpHotKeys() { objectWillChange.send(); changed() }
+
     func refresh() {
         accessibilityTrusted = Paster.isTrusted
         launchAtLogin = LoginItem.isEnabled
@@ -627,6 +630,25 @@ struct HotKeyPane: View {
                     HotKeyRecorderField(model: model)
                 }
             }
+            // ⚠️ 회의 단축키는 **이 탭**이다. 처음에 '일반' 탭의 "받아쓰기 시작 단축키" 뒤에
+            //    붙였는데, 단축키 탭이 따로 있는 걸 못 보고 한 짓이었다.
+            SettingsSection("회의록") {
+                // 대면과 화상은 권한도 동작도 달라서 따로 고른다. 하나로 묶으면 누를 때마다
+                // 무엇이 시작될지 생각해야 한다. 안 쓸 거면 비워 두면 된다.
+                SettingsRow(title: "대면 회의 녹음 시작 / 종료",
+                            subtitle: "이 맥의 마이크로 그 자리의 말을 담습니다.") {
+                    SlotHotKeyField(slot: .inPerson, model: model)
+                }
+                SettingsRow(title: "화상 회의 녹음 시작 / 종료",
+                            subtitle: "내 목소리와 스피커로 나오는 소리를 함께 담습니다. 화면 기록 권한이 필요합니다.") {
+                    SlotHotKeyField(slot: .videoCall, model: model)
+                }
+                SettingsRow(title: "중요한 대목 표시",
+                            subtitle: "회의 중 \"이건 꼭 남아야 해\" 싶을 때 누릅니다. 그 자리부터 표시가 시작되고 다시 누르면 끝나며, 표시한 구간의 말은 회의록에 빠지지 않도록 AI에게 따로 짚어 줍니다. 끄는 것을 잊어도 녹음이 끝날 때 알려 드립니다.", last: true) {
+                    SlotHotKeyField(slot: .highlight, model: model)
+                }
+            }
+
             SettingsSection("프리셋") {
                 ForEach(Array(HotKeyPreset.all.enumerated()), id: \.offset) { i, p in
                     let on = model.customHotKey == nil && model.hotKeyIndex == i
@@ -947,6 +969,88 @@ struct SmallButton: View {
 
 /// 클릭하면 녹음 상태가 되고, 앱에 들어오는 다음 keyDown 을 단축키로 저장한다. Esc 로 취소.
 /// 첫 응답자 방식은 SwiftUI 호스팅 창에서 키를 못 받아서, 로컬 이벤트 모니터로 가로챈다.
+/// 받아쓰기 말고 나머지 단축키(대면·화상·하이라이트)를 고르는 칸.
+/// ⚠️ 받아쓰기용 `HotKeyRecorderField` 와 따로 둔다 — 그쪽은 프리셋과 "직접 설정" 표시가
+///    얽혀 있고, 이쪽은 **비워 둘 수 있어야** 한다(안 쓰는 단축키를 잡아 두면 다른 앱과 부딪힌다).
+struct SlotHotKeyField: View {
+    let slot: HotKey.Slot
+    @ObservedObject var model: SettingsModel
+    @State private var recording = false
+    @State private var held = ""
+    @State private var monitors: [Any] = []
+    @State private var maxHeld: UInt32 = 0
+
+    private var combo: HotKeyCombo? { Prefs.extraHotKey(slot) }
+
+    private var label: String {
+        if recording { return held.isEmpty ? "키 조합을 누르세요…" : held + "…" }
+        return combo?.title ?? "없음"
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button(action: { if !recording { start() } }) {
+                Text(label)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(recording ? .coralDeep : (combo == nil ? .text4 : .ink))
+                    .padding(.horizontal, 10).frame(height: 28)
+                    .background(recording ? Color.coral.opacity(0.08) : Color.fill)
+                    .overlay(RoundedRectangle(cornerRadius: 7)
+                        .stroke(recording ? Color.coral : Color.lineStrong, lineWidth: 1))
+                    .cornerRadius(7)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(recording ? "Esc 로 취소 · 수정자 키만 눌렀다 떼도 저장됩니다." : "클릭해서 바꾸기")
+            if combo != nil, !recording {
+                Button("지우기") { Prefs.setExtraHotKey(nil, for: slot); model.bumpHotKeys() }
+                    .buttonStyle(.link).font(.system(size: 11))
+            }
+        }
+        .fixedSize()
+        .onDisappear { stop() }
+    }
+
+    private func save(_ c: HotKeyCombo) {
+        Prefs.setExtraHotKey(c, for: slot)
+        model.bumpHotKeys()
+        stop()
+    }
+
+    private func start() {
+        recording = true; held = ""; maxHeld = 0
+        NotificationCenter.default.post(name: .breflyHotKeyCaptureBegan, object: nil)
+        let keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if event.keyCode == UInt16(kVK_Escape) { stop(); return nil }
+            let mods = HotKeyCombo.carbonModifiers(from: event.modifierFlags)
+            guard mods != 0 else { NSSound.beep(); return nil }
+            save(HotKeyCombo(keyCode: UInt32(event.keyCode), modifiers: mods))
+            return nil
+        }
+        let flagMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
+            let now = HotKeyCombo.modifierBits(from: event.modifierFlags)
+            held = HotKeyCombo(keyCode: 0, modifiers: now).modifierSymbols
+            if now & maxHeld == maxHeld, now != maxHeld {
+                maxHeld = now
+            } else if now == 0, maxHeld != 0 {
+                save(HotKeyCombo(keyCode: HotKeyCombo.modifierOnlyKeyCode, modifiers: maxHeld))
+                return nil
+            } else if now == 0 {
+                maxHeld = 0
+            }
+            return nil
+        }
+        monitors = [keyMonitor, flagMonitor].compactMap { $0 }
+    }
+
+    private func stop() {
+        for m in monitors { NSEvent.removeMonitor(m) }
+        monitors = []
+        recording = false
+        NotificationCenter.default.post(name: .breflyHotKeyCaptureEnded, object: nil)
+    }
+}
+
 struct HotKeyRecorderField: View {
     @ObservedObject var model: SettingsModel
     @State private var recording = false

@@ -594,8 +594,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         // 단축키를 녹음하는 동안엔 전역 핫키를 풀어 둔다. 같은 조합을 누르면 녹음이 켜져 버린다.
         NotificationCenter.default.addObserver(forName: .breflyHotKeyCaptureBegan, object: nil, queue: .main) { _ in
-            HotKey.unregister()
-            ModifierHotKey.unregister()
+            HotKey.unregisterAll()
+            ModifierHotKey.unregisterAll()
         }
         NotificationCenter.default.addObserver(forName: .breflyHotKeyCaptureEnded, object: nil, queue: .main) { [weak self] _ in
             self?.registerHotKey()
@@ -689,24 +689,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         AudioDucker.restore()
-        HotKey.unregister()
-        ModifierHotKey.unregister()
+        HotKey.unregisterAll()
+        ModifierHotKey.unregisterAll()
         recorder.cancel()
     }
 
     // MARK: 단축키
 
     private func registerHotKey() {
+        HotKey.unregisterAll()
+        ModifierHotKey.unregisterAll()
+        registerDictationHotKey()
+        registerExtraHotKeys()
+    }
+
+    /// 받아쓰기 말고 나머지 셋. 비워 둔 것은 등록하지 않는다.
+    private func registerExtraHotKeys() {
+        let jobs: [(slot: HotKey.Slot, name: String, action: () -> Void)] = [
+            (.inPerson,  "대면 회의",  { [weak self] in self?.startMeetingInPerson() }),
+            (.videoCall, "화상 회의",  { [weak self] in self?.startMeetingVideoCall() }),
+            (.highlight, "하이라이트", { [weak self] in self?.toggleHighlight() }),
+        ]
+        for (slot, name, action) in jobs {
+            guard let combo = Prefs.extraHotKey(slot) else { continue }
+            let wrapped: () -> Void = { Log.write("단축키 눌림 — \(name)"); action() }
+            let ok = combo.isModifierOnly
+                ? ModifierHotKey.register(slot, combo, action: wrapped)
+                : HotKey.register(slot, keyCode: combo.keyCode,
+                                  modifiers: combo.modifiers & 0xFFFF, action: wrapped)
+            Log.write("\(name) 단축키 \(combo.title) 등록: \(ok)")
+        }
+    }
+
+    private func registerDictationHotKey() {
         let combo = Prefs.currentHotKey
         let action: () -> Void = { [weak self] in
             Log.write("단축키 눌림")
             self?.toggle()
         }
-        HotKey.unregister()
-        ModifierHotKey.unregister()
 
         if combo.isModifierOnly {
-            let ok = ModifierHotKey.register(combo, action: action)
+            let ok = ModifierHotKey.register(.dictation, combo, action: action)
             Log.write("수정자 단축키 \(combo.title) 등록: \(ok)")
             if !ok {
                 // 사용자가 이미 권한을 켜 뒀어도 앱이 막 뜬 직후엔 false 로 보인다(번들 ID 가 바뀐 첫 실행에서 14초 걸렸다).
@@ -716,7 +739,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             return
         }
 
-        let ok = HotKey.register(keyCode: combo.keyCode, modifiers: combo.modifiers & 0xFFFF, action: action)
+        let ok = HotKey.register(.dictation, keyCode: combo.keyCode,
+                                 modifiers: combo.modifiers & 0xFFFF, action: action)
         Log.write("단축키 \(combo.title) 등록: \(ok)")
         if !ok {
             fail("단축키 \(combo.title) 등록 실패 — 다른 앱이 이미 쓰고 있을 수 있어요.")
@@ -2048,8 +2072,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
+    /// 녹음 중 "여기 중요하다"를 켜고 끈다. 녹음 중이 아니면 알려만 준다.
+    @objc private func toggleHighlight() {
+        guard let recorder = meetingRecorder else {
+            setState(state, message: "회의를 녹음하는 중에만 표시할 수 있습니다.")
+            return
+        }
+        let on = recorder.toggleHighlight()
+        model.highlightOn = on
+        model.highlightCount = recorder.highlights.count
+        setState(state, message: on ? "중요 표시 시작 — 다시 누르면 끝납니다."
+                                    : "중요 표시 \(recorder.highlights.count)개")
+    }
+
     @objc private func stopMeetingRecording() {
         guard let recorder = meetingRecorder else { return }
+        // ⚠️ 끄는 걸 잊은 채 끝내는 일이 잦다. 자동으로 닫고 **그랬다고 알려 준다** —
+        //    조용히 닫으면 어디까지 표시됐는지 알 수 없다.
+        let wasOpen = recorder.closeOpenHighlight()
         meetingRecorder = nil
         meetingLevelTimer?.invalidate()
         meetingLevelTimer = nil
@@ -2068,20 +2108,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // 시스템 트랙이 비어 있으면(권한 없음 등) 넘기지 않는다 — 무음을 받아쓰면
             // Whisper 가 없는 말을 지어낸다.
             let system = recorder.systemBuffers > 0 ? session.system : nil
+            if wasOpen {
+                let alert = NSAlert()
+                alert.messageText = "중요 표시를 끄지 않으셨습니다"
+                alert.informativeText = "마지막 표시를 녹음이 끝난 지점까지로 두었습니다.\n"
+                    + "표시한 대목은 \(recorder.highlights.count)개입니다."
+                alert.addButton(withTitle: "알겠습니다")
+                NSApp.activate(ignoringOtherApps: true)
+                alert.runModal()
+            }
+            self.model.highlightOn = false
+            self.model.highlightCount = 0
             self.makeMeetingNotesFromTracks(mic: session.mic, system: system,
                                             recordedAt: session.startedAt,
-                                            folder: session.directory)
+                                            folder: session.directory,
+                                            highlights: recorder.highlights)
         }
     }
 
-    private func makeMeetingNotesFromTracks(mic: URL, system: URL?, recordedAt: Date, folder: URL) {
+    /// 방금 만든 회의록의 중요 표시 수. 결과 창 "요약 정보"에 보여 준다.
+    private var lastHighlightCount = 0
+
+    private func makeMeetingNotesFromTracks(mic: URL, system: URL?, recordedAt: Date, folder: URL,
+                                            highlights: [(start: Double, end: Double)] = []) {
+        lastHighlightCount = highlights.count
         isMakingMeetingNotes = true
         let cancel = CancelToken()
         meetingCancel = cancel
         var run = AppModel.MeetingRun(fileName: "회의 녹음", audioSeconds: nil, startedAt: Date())
         meetingRun = run
         model.phase = .meeting(run)
-        MeetingNotes.makeFromTracks(mic: mic, system: system, recordedAt: recordedAt, cancel: cancel,
+        MeetingNotes.makeFromTracks(mic: mic, system: system, recordedAt: recordedAt,
+                                    highlights: highlights, cancel: cancel,
                                     onProgress: { [weak self] progress in
             guard let self else { return }
             DispatchQueue.main.async {
@@ -2323,7 +2381,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             segments: notes.segments,
             transcript: notes.transcript,
             speakersKnown: notes.segments.contains { $0.speaker != nil },
-            summaryFailed: notes.summaryFailed?.localizedDescription))
+            summaryFailed: notes.summaryFailed?.localizedDescription,
+            usedModel: notes.usedModel,
+            highlightCount: lastHighlightCount))
     }
 
     /// 팝오버를 닫았거나 그 사이 받아쓰기를 해서 회의록 화면이 덮였을 때 되돌아온다.

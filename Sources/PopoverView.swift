@@ -846,6 +846,11 @@ struct MeetingRecordingView: View {
             }
             .padding(.horizontal, 16).padding(.top, 16)
 
+            // ⚠️ 켜 둔 줄 모르면 끄지도 못한다. 그리고 **쓸 수 있다는 것 자체를** 여기서 알린다 —
+            //    녹음 중이 이 기능을 쓰는 유일한 순간이라, 설정에만 적어 두면 아무도 모른다.
+            highlightLine
+                .padding(.horizontal, 16).padding(.top, 8)
+
             // 소리가 들어오고 있는지 눈으로 본다. 끝나고서야 아는 것이 제일 나쁘다.
             //
             // ⚠️ 화상이어도 **한 줄로 합쳐 보여 준다.** 전에는 "내 목소리"와 "상대방"을 나눠
@@ -893,6 +898,35 @@ struct MeetingRecordingView: View {
                 .padding(.top, 10).padding(.bottom, 14)
         }
         .onReceive(timer) { tick = $0 }
+    }
+
+    /// 중요 표시 줄. 네 가지 모습 — 켜짐 / 표시한 것 있음 / 단축키는 있음 / 단축키도 없음.
+    /// 단축키를 안 정했으면 어디서 정하는지 알려 준다.
+    @ViewBuilder
+    private var highlightLine: some View {
+        let key = Prefs.extraHotKey(.highlight)
+        HStack(spacing: 6) {
+            Image(systemName: model.highlightOn ? "bookmark.fill" : "bookmark")
+                .font(.system(size: 10))
+                .foregroundColor(model.highlightOn ? .coral : .darkMuted)
+            Group {
+                if model.highlightOn {
+                    Text("중요한 대목 표시 중 — 다시 누르면 끝납니다")
+                        .font(.system(size: 11, weight: .semibold)).foregroundColor(.coral)
+                } else if model.highlightCount > 0 {
+                    Text("표시한 대목 \(model.highlightCount)곳" + (key.map { " · \($0.title)" } ?? ""))
+                        .font(.system(size: 11)).foregroundColor(.darkMuted)
+                } else if let key {
+                    Text("중요한 대목은 \(key.title) 로 표시하세요")
+                        .font(.system(size: 11)).foregroundColor(.darkMuted)
+                } else {
+                    Text("설정 > 단축키에서 '중요한 대목 표시'를 켤 수 있습니다")
+                        .font(.system(size: 11)).foregroundColor(.darkMuted)
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
     }
 
     /// 두 갈래 중 큰 쪽. 마이크만 쓰는 대면이거나 시스템 소리를 못 잡는 중이면 그냥 마이크다.
@@ -1014,7 +1048,11 @@ struct MeetingTabView: View {
                           action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 7) {
+                // ⚠️ 아이콘 칸 높이를 못 박는다. SF Symbol 은 글리프마다 높이가 달라서
+                //    (2026-09-30 실측: person.2 19pt vs video 16pt) 그대로 두면 나란히 놓인
+                //    두 칸의 높이가 3pt 어긋난다. 레이아웃은 같은데 아이콘 탓이다.
                 Image(systemName: icon).font(.system(size: 16)).foregroundColor(.onMeetingRow)
+                    .frame(height: 20, alignment: .center)
                 Text(title).font(.system(size: 13, weight: .bold)).foregroundColor(.onMeetingRow)
             }
             .frame(maxWidth: .infinity, alignment: .leading)

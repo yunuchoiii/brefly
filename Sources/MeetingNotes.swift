@@ -19,6 +19,9 @@ enum MeetingNotes {
         let segments: [Whisper.Segment]
         let transcribeSeconds: Double
         let summarizeSeconds: Double
+        /// 실제로 요약한 회사와 모델. AUTO 는 회사를 오가므로 결과만 보고는 알 수 없다.
+        /// 예: `("ChatGPT — 정확", "gpt-5.5")`
+        var usedModel: (label: String, name: String)?
         /// 요약이 끝내 실패했으면 그 까닭. `notes` 에는 받아 적은 원문이 들어 있다.
         ///
         /// ⚠️ 요약 실패를 `.failure` 로 돌려주지 않는 이유가 이것이다. 2026-09-29 에
@@ -192,7 +195,8 @@ enum MeetingNotes {
         switch result {
         case .success(let notes):
             return Result(transcript: transcript, notes: notes, segments: segments,
-                          transcribeSeconds: transcribeSeconds, summarizeSeconds: elapsed)
+                          transcribeSeconds: transcribeSeconds, summarizeSeconds: elapsed,
+                          usedModel: lastUsed)
         case .failure(let error):
             Log.write("요약 실패 — 받아 적은 원문으로 저장한다: \(error.localizedDescription)")
             return Result(transcript: transcript,
@@ -208,7 +212,37 @@ enum MeetingNotes {
     ///
     /// 파일 하나를 넣는 것과 다른 점은 **누가 말했는지 안다**는 것이다. 화상회의에서는
     /// 이 갈래가 곧 화자 구분이라, 화자 분리 모델 없이도 "나 / 상대"를 가를 수 있다.
+    /// 사용자가 녹음 중에 찍은 중요 구간(녹음 시작 기준 초). 그 시각에 걸친 말을 뽑아
+    /// 모델에 따로 짚어 준다.
+    ///
+    /// ⚠️ 원문에 끼워 넣지 않고 **따로 붙인다.** 본문 안에 표시를 섞으면 모델이 그 표시를
+    ///    결과에 그대로 베껴 쓴다(2026-09-29 에 "김 과장" 예시가 담당자로 올라간 것과 같은 함정).
+    static func highlightNote(_ ranges: [(start: Double, end: Double)],
+                              segments: [Whisper.Segment]) -> String {
+        guard !ranges.isEmpty else { return "" }
+        var picked: [String] = []
+        for r in ranges {
+            let inside = segments
+                .filter { $0.start < r.end && $0.end > r.start }
+                .map(\.text)
+                .joined(separator: " ")
+                .trimmingCharacters(in: .whitespaces)
+            if !inside.isEmpty { picked.append(inside) }
+        }
+        guard !picked.isEmpty else { return "" }
+        return """
+            말한 사람이 녹음 중에 **중요하다고 직접 표시한 대목**이다. 아래 말들이 회의록에
+            빠지지 않게 하고, 결정된 것이나 할 일에 해당하면 반드시 적는다.
+            다만 여기 없는 내용을 빼라는 뜻은 아니다.
+
+            \(picked.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n"))
+
+
+            """
+    }
+
     static func makeFromTracks(mic: URL, system: URL?, recordedAt: Date,
+                               highlights: [(start: Double, end: Double)] = [],
                                cancel: CancelToken? = nil,
                                onProgress: @escaping (Progress) -> Void,
                                onTranscript: ((String, [Whisper.Segment]) -> Void)? = nil,
@@ -251,7 +285,9 @@ enum MeetingNotes {
                 onTranscript?(merged, shown)
                 onProgress(Progress(stage: .summarizing, fraction: nil))
                 let summarizeStarted = Date()
-                summarize(merged, speakersKnown: hasSystem) { result in
+                let note = highlightNote(highlights, segments: shown)
+                if !note.isEmpty { Log.write("중요 표시 \(highlights.count)곳을 요약에 짚어 준다") }
+                summarize(merged, speakersKnown: hasSystem, highlightNote: note) { result in
                     completion(.success(assemble(result, transcript: merged, segments: shown,
                                                  transcribeSeconds: transcribeSeconds,
                                                  summarizeStarted: summarizeStarted)))
@@ -308,6 +344,9 @@ enum MeetingNotes {
         summarize(transcript, speakersKnown: speakersKnown, completion: completion)
     }
 
+    /// 마지막으로 성공한 회사·모델. "다시 요약" 뒤에 표시를 갱신할 때 쓴다.
+    static var lastUsedModel: (label: String, name: String)? { lastUsed }
+
     /// 저녁이면 무료 티어가 503 을 자주 뱉는다(CLAUDE.md 의 실측). 한 번 튕겼다고 포기하면
     /// 몇 분 걸려 받아 적은 것이 쓸모없어진다. 뒤로 물러서며 다시 걸고, 그래도 안 되면 모델을 바꾼다.
     ///
@@ -319,6 +358,7 @@ enum MeetingNotes {
     /// 속도가 먼저고, 회의록은 이미 받아쓰기에 2~5분을 썼으니 잘 뽑는 게 먼저다.
     /// ⚠️ 0.8.2 까지는 설정을 아예 안 보고 Gemini 로만 갔다.
     private static func summarize(_ transcript: String, speakersKnown: Bool = false,
+                                  highlightNote: String = "",
                                   completion: @escaping (Swift.Result<String, Error>) -> Void) {
         // AUTO 면 키가 있는 회사를 **가성비 순으로 줄 세워** 차례로 시도한다.
         // 하나도 없으면 Gemini 를 시도해 "키가 없습니다" 안내가 나가게 둔다 —
@@ -333,23 +373,27 @@ enum MeetingNotes {
                : Prefs.autoCandidates(for: .meeting))
             : [Prefs.meetingChoice]
         Log.write("회의록 요약 차례: " + chain.map(\.title).joined(separator: " → "))
-        tryChoice(transcript, speakersKnown: speakersKnown, chain: chain, index: 0, completion: completion)
+        tryChoice(transcript, speakersKnown: speakersKnown, highlightNote: highlightNote,
+                  chain: chain, index: 0, completion: completion)
     }
 
     /// 회사를 하나씩 내려가며 시도한다. 한 회사 안에서는 `attempt` 가 모델과 재시도를 맡는다.
-    private static func tryChoice(_ transcript: String, speakersKnown: Bool,
+    /// 마지막으로 성공한 회사·모델. `attempt` 가 모델을 바꿔 가며 걸어서 결과만으로는 알 수 없다.
+    private static var lastUsed: (label: String, name: String)?
+
+    private static func tryChoice(_ transcript: String, speakersKnown: Bool, highlightNote: String,
                                   chain: [Prefs.Choice], index: Int,
                                   completion: @escaping (Swift.Result<String, Error>) -> Void) {
         let chosen = chain[index]
         let models = Prefs.modelNames(chosen.backend, chosen.tier)
         Log.write("회의록 요약: \(chosen.backend.shortTitle) \(chosen.tier.suffix) — \(models.first ?? "?")")
-        attempt(transcript, speakersKnown: speakersKnown,
+        attempt(transcript, speakersKnown: speakersKnown, highlightNote: highlightNote,
                 backend: chosen.backend, models: models.isEmpty ? [Prefs.geminiModel] : models,
                 modelIndex: 0, tryIndex: 0) { result in
             if case .failure(let error) = result, index + 1 < chain.count {
                 Log.write("회의록 \(chosen.backend.shortTitle) 실패 — \(chain[index + 1].title) 로 넘어감: "
                           + error.localizedDescription.prefix(80))
-                tryChoice(transcript, speakersKnown: speakersKnown,
+                tryChoice(transcript, speakersKnown: speakersKnown, highlightNote: highlightNote,
                           chain: chain, index: index + 1, completion: completion)
                 return
             }
@@ -358,14 +402,17 @@ enum MeetingNotes {
     }
 
     /// 같은 모델로 `retryDelays` 만큼 물러서며 다시 걸고, 다 쓰면 다음 모델로 넘어간다.
-    private static func attempt(_ transcript: String, speakersKnown: Bool,
+    private static func attempt(_ transcript: String, speakersKnown: Bool, highlightNote: String = "",
                                 backend: Prefs.Backend, models: [String],
                                 modelIndex: Int, tryIndex: Int,
                                 completion: @escaping (Swift.Result<String, Error>) -> Void) {
         let model = models[min(modelIndex, models.count - 1)]
-        call(transcript, speakersKnown: speakersKnown, backend: backend, model: model) { result in
+        call(transcript, speakersKnown: speakersKnown, highlightNote: highlightNote,
+             backend: backend, model: model) { result in
             switch result {
             case .success:
+                // 어느 것이 뽑았는지 남긴다. 결과 창의 "요약 정보"가 이걸 보여 준다.
+                lastUsed = (backend.shortTitle, model)
                 if modelIndex > 0 || tryIndex > 0 { Log.write("요약 성공 — \(model), \(tryIndex + 1)번째 시도") }
                 completion(result)
             case .failure(let error):
@@ -374,14 +421,16 @@ enum MeetingNotes {
                     let wait = retryDelays[tryIndex]
                     Log.write("요약 재시도 — \(model), \(wait)초 뒤 (\(error.localizedDescription.prefix(60)))")
                     DispatchQueue.global().asyncAfter(deadline: .now() + wait) {
-                        attempt(transcript, speakersKnown: speakersKnown, backend: backend, models: models,
+                        attempt(transcript, speakersKnown: speakersKnown, highlightNote: highlightNote,
+                                backend: backend, models: models,
                                 modelIndex: modelIndex, tryIndex: tryIndex + 1, completion: completion)
                     }
                     return
                 }
                 if modelIndex + 1 < models.count {
                     Log.write("요약 모델 바꿈 — \(model) → \(models[modelIndex + 1])")
-                    attempt(transcript, speakersKnown: speakersKnown, backend: backend, models: models,
+                    attempt(transcript, speakersKnown: speakersKnown, highlightNote: highlightNote,
+                            backend: backend, models: models,
                             modelIndex: modelIndex + 1, tryIndex: 0, completion: completion)
                     return
                 }
@@ -403,10 +452,10 @@ enum MeetingNotes {
 
     /// 고른 회사로 보낸다. 회의록은 글이 길어서(48분이면 4만 자) 받아쓰기 쪽 클라이언트를
     /// 그대로 쓰지 않는다 — 거기는 출력이 2048 토큰으로 묶여 있어 중간에 잘린다.
-    private static func call(_ transcript: String, speakersKnown: Bool,
+    private static func call(_ transcript: String, speakersKnown: Bool, highlightNote: String = "",
                              backend: Prefs.Backend, model: String,
                              completion: @escaping (Swift.Result<String, Error>) -> Void) {
-        let system = (speakersKnown ? speakerNote : "") + instruction
+        let system = (speakersKnown ? speakerNote : "") + highlightNote + instruction
         let user = "<회의록>\n\(transcript)\n</회의록>"
         switch backend {
         case .openai:

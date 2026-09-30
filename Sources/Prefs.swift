@@ -443,6 +443,30 @@ enum Prefs {
         customHotKey ?? HotKeyPreset.preset(at: hotKeyIndex).combo
     }
 
+    // MARK: 회의 단축키
+
+    /// 받아쓰기 말고 나머지 단축키. 저마다 따로 고른다 — 대면과 화상은 권한도 동작도 달라서
+    /// 하나로 묶으면 무엇이 시작될지 누를 때마다 생각해야 한다.
+    /// 비워 두면 그 단축키는 등록하지 않는다. 기본값이 비어 있다 — 쓰지도 않는 조합을
+    /// 미리 잡아 두면 다른 앱과 부딪힌다.
+    static func extraHotKey(_ slot: HotKey.Slot) -> HotKeyCombo? {
+        let code = "hotkey.\(slot.rawValue).code", mods = "hotkey.\(slot.rawValue).mods"
+        guard d.object(forKey: code) != nil else { return nil }
+        return HotKeyCombo(keyCode: UInt32(d.integer(forKey: code)),
+                           modifiers: UInt32(d.integer(forKey: mods)))
+    }
+
+    static func setExtraHotKey(_ combo: HotKeyCombo?, for slot: HotKey.Slot) {
+        let code = "hotkey.\(slot.rawValue).code", mods = "hotkey.\(slot.rawValue).mods"
+        if let combo {
+            d.set(Int(combo.keyCode), forKey: code)
+            d.set(Int(combo.modifiers), forKey: mods)
+        } else {
+            d.removeObject(forKey: code)
+            d.removeObject(forKey: mods)
+        }
+    }
+
     // MARK: 기타
 
     /// Claude 정리를 끄면 받아쓰기 원문을 그대로 붙여 넣는다.
