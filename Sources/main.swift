@@ -847,7 +847,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         recorder.cancel()
         AudioDucker.restore()
         recordingStartedAt = nil
-        model.phase = .idle
+        if !restoreMeetingPhaseIfRecording() { model.phase = .idle }
         setState(.idle, message: "취소됨")
         popover.performClose(nil)
         Log.write("녹음 취소")
@@ -975,7 +975,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func finishQuietly(_ message: String) {
         Log.write("빈 녹음 — \(message) (버퍼 \(recorder.bufferCount)개)")
         partialText = ""
-        model.phase = .idle
+        if !restoreMeetingPhaseIfRecording() { model.phase = .idle }
         setState(.idle, message: message)
         if popover.isShown { popover.performClose(nil) }
     }
@@ -1152,8 +1152,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func showPopover() {
         guard let button = statusItem.button, !popover.isShown else { return }
         // 오래된 결과는 치운다. 기록에서 꺼내 본 것(`resultShownAt` 이 비어 있음)은 그대로 둔다.
-        if case .done = model.phase, let shown = model.resultShownAt,
-           Date().timeIntervalSince(shown) > Self.resultStaleAfter {
+        // ⚠️ 회의를 녹음하는 중이면 **무조건** 그 화면으로 돌아간다. 받아쓰기 결과가 덮고 있으면
+        //    끝내는 버튼이 없어 녹음을 멈출 수가 없다.
+        if meetingRecorder != nil, let run = meetingRecordingRun {
+            if case .meetingRecording = model.phase {} else {
+                model.phase = .meetingRecording(run)
+                model.resultShownAt = nil
+            }
+        } else if case .done = model.phase, let shown = model.resultShownAt,
+                  Date().timeIntervalSince(shown) > Self.resultStaleAfter {
             model.phase = .idle
             model.resultShownAt = nil
         }
@@ -2005,8 +2012,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 return
             }
             let capturing = captureSystem && recorder.systemAudioError == nil
-            self.model.phase = .meetingRecording(AppModel.MeetingRecordingRun(
-                startedAt: Date(), capturingSystem: capturing, inPerson: !captureSystem))
+            let run = AppModel.MeetingRecordingRun(
+                startedAt: Date(), capturingSystem: capturing, inPerson: !captureSystem)
+            // ⚠️ 받아쓰기가 `phase` 를 덮어써도 되돌아올 수 있게 따로 들고 있는다.
+            //    전에는 회의 녹음 중에 받아쓰기를 한 번 하면 **녹음 화면으로 영영 못 돌아갔다** —
+            //    메뉴바 시계는 흐르는데 팝오버에는 끝내는 버튼이 없어 멈출 수가 없었다.
+            self.meetingRecordingRun = run
+            self.model.phase = .meetingRecording(run)
             self.showPopover()
             self.startMeetingLevelTimer(recorder)
             self.meetingRecordingStartedAt = Date()
@@ -2071,6 +2083,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // 버리기로 한 녹음을 디스크에 남겨 두지 않는다. 목소리다.
             if let session { try? FileManager.default.removeItem(at: session.directory) }
             self.meetingRing = nil
+            self.meetingRecordingRun = nil
             if case .meetingRecording = self.model.phase { self.model.phase = .idle }
             self.setState(self.state, message: "회의 녹음을 취소했습니다.")
             Log.write("회의 녹음 취소 — 녹음 파일도 지웠다")
@@ -2096,6 +2109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         //    조용히 닫으면 어디까지 표시됐는지 알 수 없다.
         let wasOpen = recorder.closeOpenHighlight()
         meetingRecorder = nil
+        meetingRecordingRun = nil
         meetingLevelTimer?.invalidate()
         meetingLevelTimer = nil
         meetingClockTimer?.invalidate()
@@ -2131,7 +2145,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    /// 방금 만든 회의록의 중요 표시 수. 결과 창 "요약 정보"에 보여 준다.
+    /// 지금 돌고 있는 회의 녹음 화면. 받아쓰기가 `phase` 를 덮어써도 여기서 되찾는다.
+    private var meetingRecordingRun: AppModel.MeetingRecordingRun?
+
+    /// 받아쓰기가 끝난 뒤 회의 녹음 중이었으면 그 화면으로 돌려놓는다.
+    /// 아무 일도 없었으면 시키는 대로 `.idle` 로 둔다.
+    private func restoreMeetingPhaseIfRecording() -> Bool {
+        guard meetingRecorder != nil, let run = meetingRecordingRun else { return false }
+        model.phase = .meetingRecording(run)
+        return true
+    }
+
+    /// 방금 만든 회의록의 하이라이트 수. 결과 창 "요약 정보"에 보여 준다.
     private var lastHighlightCount = 0
 
     private func makeMeetingNotesFromTracks(mic: URL, system: URL?, recordedAt: Date, folder: URL,
