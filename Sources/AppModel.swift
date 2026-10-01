@@ -3,6 +3,12 @@ import Combine
 
 /// 팝오버가 그리는 상태. AppDelegate가 갱신하고 SwiftUI가 관찰한다.
 final class AppModel: ObservableObject {
+    /// 녹음 화면에 잠깐 띄우는 알림("회의 중에는 받아쓰기를 할 수 없습니다").
+    /// ⚠️ `setState` 의 메시지는 메뉴바와 우클릭 메뉴에만 간다. **녹음 중 팝오버 두 개
+    ///    어디에도 상태 줄이 없어서**, 이것이 없으면 단축키를 눌러도 아무 일도 안 일어난
+    ///    것처럼 보인다 — 막았다는 사실 자체가 안 보이면 고장으로 읽힌다.
+    @Published var notice: String?
+
 
     enum Delivery {
         case copied     // 클립보드 복사

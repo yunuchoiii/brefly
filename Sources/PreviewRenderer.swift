@@ -113,6 +113,11 @@ enum PreviewRenderer {
         model.phase = .meetingRecording(AppModel.MeetingRecordingRun(
             startedAt: Date().addingTimeInterval(-372), capturingSystem: false, inPerson: true))
         snap("1e-meeting-recording-in-person")
+        // 회의 중 받아쓰기 단축키를 눌렀을 때. 막았다는 것이 **화면에** 보여야 한다 —
+        // 메뉴바 글자만으로는 눌러도 아무 일 없는 것으로 읽힌다.
+        model.notice = "회의를 녹음하는 중에는 받아쓰기를 할 수 없습니다."
+        snap("1e-meeting-recording-blocked")
+        model.notice = nil
 
         model.retryRecord = samples[0]
         model.phase = .error("정리에 실패해서 원문을 그대로 복사했어요\n\n"

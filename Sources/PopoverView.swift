@@ -266,6 +266,14 @@ struct RecordingView: View {
                 .frame(height: 44)
                 .padding(.top, 14).padding(.bottom, 12)
 
+            if let notice = model.notice {
+                Text(notice)
+                    .font(.system(size: 11, weight: .semibold)).foregroundColor(.coral)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16).padding(.bottom, 10)
+            }
+
             HStack(alignment: .bottom, spacing: 0) {
                 (Text(model.partialText.isEmpty ? "말씀하세요…" : tail)
                     .foregroundColor(model.partialText.isEmpty ? .darkMuted : .darkText)
@@ -863,6 +871,14 @@ struct MeetingRecordingView: View {
             Waveform(levels: combinedLevels)
                 .frame(height: 44)
                 .padding(.top, 14).padding(.bottom, 14)
+
+            if let notice = model.notice {
+                Text(notice)
+                    .font(.system(size: 11, weight: .semibold)).foregroundColor(.coral)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16).padding(.bottom, 12)
+            }
 
             if !run.inPerson, !run.capturingSystem {
                 // 모르고 회의를 다 녹음한 뒤에 알면 되돌릴 수 없다.

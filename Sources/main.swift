@@ -751,6 +751,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     // MARK: 녹음 토글
 
     @objc private func toggle() {
+        // ⚠️ 회의를 녹음하는 중에는 받아쓰기를 하지 않는다(2026-10-01 결정). 기술로는 되지만
+        //    — 마이크는 서로 간섭하지 않는 것을 쟀다 — 쓰는 사람에게 손해가 크다.
+        //    1) **말한 것이 회의록에도 들어간다.** 회의 마이크는 내내 돌고 있어서, 받아쓰려고
+        //       한 말("여보세요")이 회의 녹음에 그대로 섞인다.
+        //    2) **화상 회의면 상대 목소리가 작아진다.** 받아쓰기는 `AudioDucker` 로 출력 볼륨을
+        //       ×0.3 으로 낮춘다. 회의 중에 그러면 상대 말을 못 듣는다.
+        //    화면이 겹치는 문제(어느 시계를 보여 줄지, 팝오버에 무엇을 띄울지)도 여기서 사라진다.
+        if meetingRecorder != nil, !recorder.isRunning {
+            let message = "회의를 녹음하는 중에는 받아쓰기를 할 수 없습니다."
+            setState(state, message: message)
+            showNotice(message)
+            showPopover()
+            return
+        }
         recorder.isRunning ? stopAndPolish() : startRecording()
     }
 
@@ -1416,6 +1430,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     // MARK: 상태 표시
 
+    /// 녹음 중 팝오버에 알림을 3초 띄운다. 겹쳐 눌러도 마지막 것만 남게 세어 둔다.
+    private var noticeToken = 0
+    private func showNotice(_ message: String) {
+        noticeToken += 1
+        let token = noticeToken
+        model.notice = message
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let self, self.noticeToken == token else { return }
+            self.model.notice = nil
+        }
+    }
+
     private func setState(_ newState: AppState, message: String) {
         DispatchQueue.main.async {
             self.state = newState
@@ -1505,23 +1531,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             string: " ●", attributes: [.font: NSFont.systemFont(ofSize: 9, weight: .bold),
                                        .foregroundColor: Theme.coral,
                                        .baselineOffset: 1])
-        // 이 타이머가 0.25초마다 메뉴바를 **직접** 덮어쓴다. 회의를 녹음하는 중이면 받아쓰기
-        // 시계가 아니라 **회의 시계**를 적는다 — 받아쓰기 시계만 남기면 회의 시계가 0부터 다시
-        // 시작한 것처럼 보인다(2026-10-01 실측: 메뉴바 0:15, 팝오버 1:05 — 같은 회의인데 50초 차이).
-        //
-        // ⚠️ 둘을 같이 적어 봤다가 뺐다. `● 0:19 · 회의 0:22` 는 다른 앱이 메뉴바 항목을
-        //    하나 더하자 `● 0:19 · 회…` 로 잘렸다(2026-10-01 실측). 긴 쪽인 회의 시계를
-        //    남기고, 받아쓰기가 도는 중이라는 것은 코랄 점이 알린다. 받아쓰기 경과 시간은
-        //    팝오버 녹음 화면에 그대로 있다.
-        let clock: String
-        if let started = meetingRecordingStartedAt {
-            let seconds = Int(Date().timeIntervalSince(started))
-            clock = String(format: " 회의 %d:%02d", seconds / 60, seconds % 60)
-        } else {
-            clock = " \(Format.timer(model.elapsed))"
-        }
         title.append(NSAttributedString(
-            string: clock,
+            string: " \(Format.timer(model.elapsed))",
             attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)]))
         button.attributedTitle = title
     }
@@ -1984,9 +1995,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     // MARK: 회의를 지금 녹음하기
 
+    /// 받아쓰기가 **마이크를 잡고 있는 동안**에는 회의 녹음을 시작하지 않는다.
+    /// `toggle()` 의 반대 방향이다 — 한쪽만 막으면 순서를 바꿔 누르는 것으로 그대로 겹친다.
+    /// 정리 중(`.polishing`)은 마이크를 이미 놓았으므로 막지 않는다.
+    private func dictationBlocksMeeting() -> Bool {
+        guard recorder.isRunning else { return false }
+        let message = "받아쓰기를 끝내고 다시 눌러 주세요."
+        setState(state, message: message)
+        showNotice(message)
+        showPopover()
+        return true
+    }
+
     /// ⚠️ 토글이다. 녹음 중에 다시 누르면 끝낸다 — 시작만 되고 못 끄면 단축키로 갇힌다.
     @objc private func startMeetingInPerson() {
         if meetingRecorder != nil { stopMeetingRecording(); return }
+        if dictationBlocksMeeting() { return }
         meetingKind = .inPerson
         beginMeetingRecording(captureSystem: false)
     }
@@ -1994,6 +2018,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// ⚠️ 대면과 같이 토글이다. 녹음 중에 다시 누르면 끝낸다.
     @objc private func startMeetingVideoCall() {
         if meetingRecorder != nil { stopMeetingRecording(); return }
+        if dictationBlocksMeeting() { return }
         // ⚠️ 화면 기록 권한이 없으면 상대 목소리를 못 잡는다. 그냥 시작하면 회의가 끝난 뒤에야
         //    내 말만 남은 걸 알게 된다 — 되돌릴 수 없는 손해다. 먼저 묻는다.
         Task { @MainActor in
