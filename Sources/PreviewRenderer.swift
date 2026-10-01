@@ -199,6 +199,9 @@ enum PreviewRenderer {
               to: dir.appendingPathComponent("2-settings-general-full.png"))
         write(render(AdvancedPane(model: settings).padding(20).frame(width: 620).background(Color.paperSoft)),
               to: dir.appendingPathComponent("2-settings-advanced-full.png"))
+        // 단축키 탭도 회의록 묶음이 붙어 한 화면을 넘는다.
+        write(render(HotKeyPane(model: settings).padding(20).frame(width: 620).background(Color.paperSoft)),
+              to: dir.appendingPathComponent("2-settings-hotkey-full.png"))
         // 정리 스타일이 라디오 목록이 되면서 인식 탭이 한 화면을 넘는다. 전체를 봐야 확인이 된다.
         write(render(RecognitionPane(model: settings).padding(20).frame(width: 620).background(Color.paperSoft)),
               to: dir.appendingPathComponent("2-settings-recognition-full.png"))

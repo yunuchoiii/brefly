@@ -1946,12 +1946,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     // MARK: 회의를 지금 녹음하기
 
+    /// ⚠️ 토글이다. 녹음 중에 다시 누르면 끝낸다 — 시작만 되고 못 끄면 단축키로 갇힌다.
     @objc private func startMeetingInPerson() {
+        if meetingRecorder != nil { stopMeetingRecording(); return }
         meetingKind = .inPerson
         beginMeetingRecording(captureSystem: false)
     }
 
+    /// ⚠️ 대면과 같이 토글이다. 녹음 중에 다시 누르면 끝낸다.
     @objc private func startMeetingVideoCall() {
+        if meetingRecorder != nil { stopMeetingRecording(); return }
         // ⚠️ 화면 기록 권한이 없으면 상대 목소리를 못 잡는다. 그냥 시작하면 회의가 끝난 뒤에야
         //    내 말만 남은 걸 알게 된다 — 되돌릴 수 없는 손해다. 먼저 묻는다.
         Task { @MainActor in

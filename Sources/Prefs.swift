@@ -456,6 +456,21 @@ enum Prefs {
                            modifiers: UInt32(d.integer(forKey: mods)))
     }
 
+    /// 이 조합을 이미 쓰고 있는 다른 자리. 없으면 nil.
+    ///
+    /// ⚠️ 같은 조합을 둘에 정하면 **하나는 절대 안 눌린다** — 먼저 등록된 쪽이 가로채고,
+    ///    화면에는 둘 다 정해진 것처럼 보인다. 무엇이 고장인지 알 길이 없어서 저장 전에 막는다.
+    static func hotKeyOwner(_ combo: HotKeyCombo, excluding slot: HotKey.Slot?) -> String? {
+        if slot != .dictation, currentHotKey == combo { return "받아쓰기 시작 / 종료" }
+        let names: [HotKey.Slot: String] = [
+            .inPerson: "대면 회의 녹음", .videoCall: "화상 회의 녹음", .highlight: "하이라이트",
+        ]
+        for (other, name) in names where other != slot {
+            if extraHotKey(other) == combo { return name }
+        }
+        return nil
+    }
+
     static func setExtraHotKey(_ combo: HotKeyCombo?, for slot: HotKey.Slot) {
         let code = "hotkey.\(slot.rawValue).code", mods = "hotkey.\(slot.rawValue).mods"
         if let combo {

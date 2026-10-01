@@ -979,8 +979,12 @@ struct MeetingTabView: View {
                 // 바로 시작하는 둘은 나란히 둔다. 성격이 같은 짝이라 위아래로 쌓으면 목록처럼 보인다.
                 HStack(spacing: 8) {
                     liveCard(icon: "person.2", title: "대면 회의", fill: .meetingRow1,
+                             hotKey: .inPerson,
                              action: model.actions.startMeetingInPerson)
-                    liveCard(icon: "video", title: "화상 회의", fill: .meetingRow2,
+                    // ⚠️ 대면과 같은 색을 쓴다. 전에는 한 단계 흐린 `meetingRow2` 였는데,
+                    //    둘은 나란히 놓인 대등한 선택지라 색이 다르면 화상이 덜 중요해 보인다.
+                    liveCard(icon: "video", title: "화상 회의", fill: .meetingRow1,
+                             hotKey: .videoCall,
                              action: model.actions.startMeetingVideoCall)
                 }
                 // 파일은 지금 녹음하는 것이 아니라 **창을 여는** 동작이라 실시간 둘과 갈라 놓는다.
@@ -1045,15 +1049,23 @@ struct MeetingTabView: View {
     /// - Parameter onFill: 어두운 칸 위에 얹는지. 흰 칸이면 글자와 아이콘을 본래 색으로 쓴다.
     /// 바로 녹음이 시작되는 칸. 좁아서 아이콘과 제목을 위아래로 쌓는다.
     private func liveCard(icon: String, title: String, fill: Color,
+                          hotKey: HotKey.Slot? = nil,
                           action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        let key = hotKey.flatMap { Prefs.extraHotKey($0) }
+        return Button(action: action) {
             VStack(alignment: .leading, spacing: 7) {
                 // ⚠️ 아이콘 칸 높이를 못 박는다. SF Symbol 은 글리프마다 높이가 달라서
                 //    (2026-09-30 실측: person.2 19pt vs video 16pt) 그대로 두면 나란히 놓인
                 //    두 칸의 높이가 3pt 어긋난다. 레이아웃은 같은데 아이콘 탓이다.
                 Image(systemName: icon).font(.system(size: 16)).foregroundColor(.onMeetingRow)
                     .frame(height: 20, alignment: .center)
-                Text(title).font(.system(size: 13, weight: .bold)).foregroundColor(.onMeetingRow)
+                HStack(spacing: 5) {
+                    Text(title).font(.system(size: 13, weight: .bold)).foregroundColor(.onMeetingRow)
+                    // 단축키를 정해 뒀으면 카드에 적어 둔다. 정하고도 잊어버리면 없는 것과 같다.
+                    // ⚠️ 받아쓰기 버튼과 같은 `KeyCap` 을 쓴다. 따로 만들었더니 같은 팝오버 안에서
+                    //    단축키 표시가 두 가지 모양이 됐다.
+                    if let key { KeyCap(key.title, accent: true) }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 12).padding(.vertical, 12)

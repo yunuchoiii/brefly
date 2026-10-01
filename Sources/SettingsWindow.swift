@@ -630,26 +630,9 @@ struct HotKeyPane: View {
                     HotKeyRecorderField(model: model)
                 }
             }
-            // ⚠️ 회의 단축키는 **이 탭**이다. 처음에 '일반' 탭의 "받아쓰기 시작 단축키" 뒤에
-            //    붙였는데, 단축키 탭이 따로 있는 걸 못 보고 한 짓이었다.
-            SettingsSection("회의록") {
-                // 대면과 화상은 권한도 동작도 달라서 따로 고른다. 하나로 묶으면 누를 때마다
-                // 무엇이 시작될지 생각해야 한다. 안 쓸 거면 비워 두면 된다.
-                SettingsRow(title: "대면 회의 녹음 시작 / 종료",
-                            subtitle: "이 맥의 마이크로 그 자리의 말을 담습니다.") {
-                    SlotHotKeyField(slot: .inPerson, model: model)
-                }
-                SettingsRow(title: "화상 회의 녹음 시작 / 종료",
-                            subtitle: "내 목소리와 스피커로 나오는 소리를 함께 담습니다. 화면 기록 권한이 필요합니다.") {
-                    SlotHotKeyField(slot: .videoCall, model: model)
-                }
-                SettingsRow(title: "중요한 대목 표시",
-                            subtitle: "회의 중 \"이건 꼭 남아야 해\" 싶을 때 누릅니다. 그 자리부터 표시가 시작되고 다시 누르면 끝나며, 표시한 구간의 말은 회의록에 빠지지 않도록 AI에게 따로 짚어 줍니다. 끄는 것을 잊어도 녹음이 끝날 때 알려 드립니다.", last: true) {
-                    SlotHotKeyField(slot: .highlight, model: model)
-                }
-            }
-
-            SettingsSection("프리셋") {
+            // ⚠️ 프리셋은 **받아쓰기 단축키**의 것이다. 회의록 섹션 아래에 두었더니
+            //    회의 단축키에도 걸리는 것처럼 읽혔다. 받아쓰기 바로 밑으로 올린다.
+            SettingsSection("받아쓰기 프리셋") {
                 ForEach(Array(HotKeyPreset.all.enumerated()), id: \.offset) { i, p in
                     let on = model.customHotKey == nil && model.hotKeyIndex == i
                     Button(action: { model.hotKeyIndex = i; model.customHotKey = nil }) {
@@ -666,6 +649,28 @@ struct HotKeyPane: View {
                     if i < HotKeyPreset.all.count - 1 { HairLine().padding(.leading, 14) }
                 }
             }
+
+            // ⚠️ 회의 단축키는 **이 탭**이다. 처음에 '일반' 탭의 "받아쓰기 시작 단축키" 뒤에
+            //    붙였는데, 단축키 탭이 따로 있는 걸 못 보고 한 짓이었다.
+            SettingsSection("회의록") {
+                // 대면과 화상은 권한도 동작도 달라서 따로 고른다. 하나로 묶으면 누를 때마다
+                // 무엇이 시작될지 생각해야 한다. 안 쓸 거면 비워 두면 된다.
+                SettingsRow(title: "대면 회의 녹음 시작 / 종료",
+                            subtitle: "이 맥의 마이크로 그 자리의 말을 담습니다.") {
+                    SlotHotKeyField(slot: .inPerson, model: model)
+                }
+                SettingsRow(title: "화상 회의 녹음 시작 / 종료",
+                            subtitle: "내 목소리와 스피커로 나오는 소리를 함께 담습니다. 화면 기록 권한이 필요합니다.") {
+                    SlotHotKeyField(slot: .videoCall, model: model)
+                }
+                // ⚠️ 짧게 둔다. "끄는 걸 잊으면 알려 준다"는 실제로 잊었을 때 그 자리에서
+                //    알림창이 뜨므로 여기 미리 적을 필요가 없다.
+                SettingsRow(title: "하이라이트",
+                            subtitle: "녹음 중 누르면 그 자리부터 표시가 시작되고, 다시 누르면 끝납니다. 표시한 말은 회의록에 꼭 들어갑니다.", last: true) {
+                    SlotHotKeyField(slot: .highlight, model: model)
+                }
+            }
+
             Text("단축키는 접근성 권한 없이도 어느 앱에서나 동작합니다. 다른 앱이 같은 조합을 쓰면 등록에 실패할 수 있습니다. ⌘ 단독 조합(⌘C 등)은 다른 앱과 겹치기 쉬우니 ⌃⌥ 를 권합니다.")
                 .font(.system(size: 11)).foregroundColor(.text3)
         }
@@ -1012,6 +1017,18 @@ struct SlotHotKeyField: View {
     }
 
     private func save(_ c: HotKeyCombo) {
+        // ⚠️ 겹치면 저장하지 않는다. 덮어쓰면 다른 단축키가 말없이 죽고,
+        //    그대로 두면 둘 중 하나가 영영 안 눌린다.
+        if let owner = Prefs.hotKeyOwner(c, excluding: slot) {
+            stop()
+            let alert = NSAlert()
+            alert.messageText = "\(c.title) 는 이미 쓰고 있습니다"
+            alert.informativeText = "'\(owner)' 에 정해 둔 조합입니다. 같은 조합을 둘에 두면 "
+                + "하나는 눌리지 않습니다. 다른 조합을 골라 주세요."
+            alert.addButton(withTitle: "알겠습니다")
+            alert.runModal()
+            return
+        }
         Prefs.setExtraHotKey(c, for: slot)
         model.bumpHotKeys()
         stop()
@@ -1085,6 +1102,22 @@ struct HotKeyRecorderField: View {
         .onDisappear { stop() }
     }
 
+    /// 받아쓰기 단축키도 회의 단축키와 겹칠 수 있다. 같은 확인을 거친다.
+    private func saveDictation(_ c: HotKeyCombo) {
+        if let owner = Prefs.hotKeyOwner(c, excluding: .dictation) {
+            stop()
+            let alert = NSAlert()
+            alert.messageText = "\(c.title) 는 이미 쓰고 있습니다"
+            alert.informativeText = "'\(owner)' 에 정해 둔 조합입니다. 같은 조합을 둘에 두면 "
+                + "하나는 눌리지 않습니다. 다른 조합을 골라 주세요."
+            alert.addButton(withTitle: "알겠습니다")
+            alert.runModal()
+            return
+        }
+        model.customHotKey = c
+        stop()
+    }
+
     private func start() {
         recording = true
         heldModifiers = ""
@@ -1101,8 +1134,7 @@ struct HotKeyRecorderField: View {
                 NSSound.beep()
                 return nil
             }
-            model.customHotKey = HotKeyCombo(keyCode: UInt32(event.keyCode), modifiers: mods)
-            stop()
+            saveDictation(HotKeyCombo(keyCode: UInt32(event.keyCode), modifiers: mods))
             return nil
         }
         let flagMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
@@ -1112,8 +1144,7 @@ struct HotKeyRecorderField: View {
                 maxHeld = now              // 더 누르는 중
             } else if now == 0, maxHeld != 0 {
                 // 전부 뗐고 그 사이 다른 키가 없었다 → 수정자 전용 단축키
-                model.customHotKey = HotKeyCombo(keyCode: HotKeyCombo.modifierOnlyKeyCode, modifiers: maxHeld)
-                stop()
+                saveDictation(HotKeyCombo(keyCode: HotKeyCombo.modifierOnlyKeyCode, modifiers: maxHeld))
                 return nil
             } else if now == 0 {
                 maxHeld = 0
