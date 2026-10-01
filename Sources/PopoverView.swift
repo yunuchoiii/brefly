@@ -289,7 +289,9 @@ struct RecordingView: View {
                 if let notice = model.notice { NoticeBox(notice) }
 
                 HStack(spacing: 18) {
-                    Waveform(levels: model.levels, width: 3, spacing: 3, height: 28,
+                    // 막대 최대 높이를 옆 '요약' 버튼과 같은 32pt 로 맞춘다. 한 줄에 나란히
+                    // 놓인 둘의 높이가 어긋나면 줄이 기울어 보인다.
+                    Waveform(levels: model.levels, width: 3, spacing: 3, height: 32,
                              fillsWidth: true)
                         .frame(height: 32)
                     Button(action: model.actions.finishRecording) {
@@ -985,7 +987,9 @@ struct MeetingRecordingView: View {
             //    소리 단계에서 떼는 건 이미 실패했고(`EchoFilter` 주석: 목소리까지 26배 감쇠),
             //    레벨만 빼는 꼼수는 두 사람이 같이 말할 때 내 쪽을 지운다. 막대가 할 일은
             //    "수음이 되고 있나"를 보여 주는 것뿐이니, 갈라서 틀리게 그리느니 합친다.
-            Waveform(levels: combinedLevels, width: 3, spacing: 4, height: 28, fillsWidth: true)
+            // 막대 최대 36pt. 시안 2a 는 28pt 였는데 띄워 보니 회의 화면에서 너무 낮았다 —
+            // 받아쓰기와 달리 옆에 높이를 맞출 상대가 없어서 그 자체로 비어 보인다.
+            Waveform(levels: combinedLevels, width: 3, spacing: 4, height: 36, fillsWidth: true)
                 .frame(height: 44)
                 .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 4)
 
