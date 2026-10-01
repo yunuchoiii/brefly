@@ -1505,18 +1505,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             string: " ●", attributes: [.font: NSFont.systemFont(ofSize: 9, weight: .bold),
                                        .foregroundColor: Theme.coral,
                                        .baselineOffset: 1])
-        title.append(NSAttributedString(
-            string: " \(Format.timer(model.elapsed))",
-            attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)]))
-        // ⚠️ 회의를 녹음하는 중이면 회의 시계도 같이 적는다. 이 타이머가 0.25초마다 메뉴바를
-        //    직접 덮어쓰기 때문에, 받아쓰기 시계만 남기면 **회의 시계가 0부터 다시 시작한 것처럼
-        //    보인다**(2026-10-01 실측: 메뉴바 0:15, 팝오버 1:05 — 같은 회의인데 50초 차이).
+        // 이 타이머가 0.25초마다 메뉴바를 **직접** 덮어쓴다. 회의를 녹음하는 중이면 받아쓰기
+        // 시계가 아니라 **회의 시계**를 적는다 — 받아쓰기 시계만 남기면 회의 시계가 0부터 다시
+        // 시작한 것처럼 보인다(2026-10-01 실측: 메뉴바 0:15, 팝오버 1:05 — 같은 회의인데 50초 차이).
+        //
+        // ⚠️ 둘을 같이 적어 봤다가 뺐다. `● 0:19 · 회의 0:22` 는 다른 앱이 메뉴바 항목을
+        //    하나 더하자 `● 0:19 · 회…` 로 잘렸다(2026-10-01 실측). 긴 쪽인 회의 시계를
+        //    남기고, 받아쓰기가 도는 중이라는 것은 코랄 점이 알린다. 받아쓰기 경과 시간은
+        //    팝오버 녹음 화면에 그대로 있다.
+        let clock: String
         if let started = meetingRecordingStartedAt {
             let seconds = Int(Date().timeIntervalSince(started))
-            title.append(NSAttributedString(
-                string: String(format: " · 회의 %d:%02d", seconds / 60, seconds % 60),
-                attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)]))
+            clock = String(format: " 회의 %d:%02d", seconds / 60, seconds % 60)
+        } else {
+            clock = " \(Format.timer(model.elapsed))"
         }
+        title.append(NSAttributedString(
+            string: clock,
+            attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)]))
         button.attributedTitle = title
     }
 
