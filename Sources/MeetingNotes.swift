@@ -232,6 +232,7 @@ enum MeetingNotes {
             let segments: [Whisper.Segment]
             do {
                 segments = try Whisper.transcribe(audio: audio, model: ModelStore.transcriptionModel,
+                                              language: language,
                                                   cancel: cancel,
                                                   onProgress: { onProgress(Progress(stage: .transcribing, fraction: $0)) })
             } catch {
@@ -265,6 +266,13 @@ enum MeetingNotes {
             }
         }
     }
+
+    /// 받아쓸 언어. 설정의 인식 언어(`ko-KR`)에서 앞 두 글자를 쓴다 — whisper 는 `ko` 꼴을 받는다.
+    ///
+    /// ⚠️ 2026-10-02 까지 `"ko"` 로 **고정돼 있었다.** 설정은 한국어·영어·일본어 셋을 주는데
+    ///    회의록만 그걸 안 봤다. 실측으로는 영어 음성을 `ko` 라고 알려 줘도 영어로 받아 적었지만
+    ///    (large-v3-turbo 는 자동 판별이 세다), 설정이 있는데 안 보는 것은 그 자체로 고장이다.
+    private static var language: String { String(Prefs.localeID.prefix(2)) }
 
     /// 받아쓰긴 했지만 **말이라 할 것이 없는** 녹음인지 본다. 여기서 걸리면 회의록을 만들지도,
     /// 기록에 남기지도 않는다.
@@ -371,13 +379,13 @@ enum MeetingNotes {
                 // 두 트랙을 잇달아 받아쓴다. 진행률은 둘을 합쳐 하나로 보여 준다 —
                 // 0%까지 갔다가 다시 0%부터 오르면 멈춘 줄 안다.
                 let micSegments = try Whisper.transcribe(
-                    audio: mic, model: model, cancel: cancel,
+                    audio: mic, model: model, language: language, cancel: cancel,
                     onProgress: { onProgress(Progress(stage: .transcribing,
                                                       fraction: hasSystem ? $0 / 2 : $0)) })
                 var systemSegments: [Whisper.Segment] = []
                 if let system {
                     systemSegments = try Whisper.transcribe(
-                        audio: system, model: model, cancel: cancel,
+                        audio: system, model: model, language: language, cancel: cancel,
                         onProgress: { onProgress(Progress(stage: .transcribing, fraction: 0.5 + $0 / 2)) })
                 }
 

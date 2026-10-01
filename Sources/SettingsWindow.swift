@@ -230,6 +230,23 @@ struct GeneralPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
+            // ⚠️ 여기 두는 이유: 받아쓰기와 회의록이 **둘 다 쓰는 유일한 설정**이다
+            //    (`Glossary.apply` 가 양쪽 받아쓴 글에 걸린다). 한쪽 탭에 두면 그쪽 전용으로
+            //    읽히고, 양쪽에 같은 걸 두면 서로 다른 설정인 줄 안다.
+            UsageContextSection(model: model)
+
+            SettingsSection("말하는 언어") {
+                // 받아쓰기와 회의록이 **둘 다** 이 값을 본다(회의록은 2026-10-02 부터).
+                SettingsRow(title: "인식 언어", subtitle: "받아쓰기와 회의록 모두 이 언어로 받아 적습니다.",
+                            last: true) {
+                    PopupLabel(title: Prefs.locales.first { $0.id == model.localeID }?.title ?? model.localeID,
+                               options: Prefs.locales.map(\.title),
+                               selected: Prefs.locales.firstIndex { $0.id == model.localeID }) {
+                        model.localeID = Prefs.locales[$0].id
+                    }
+                }
+            }
+
             SettingsSection("화면") {
                 SettingsRow(title: "화면 모드", subtitle: "팝오버와 설정 창에 적용합니다.", last: true) {
                     Segmented(options: Prefs.Appearance.allCases.map { ($0, $0.title) }, selection: $model.appearance)
@@ -333,13 +350,6 @@ struct DictationPane: View {
             SettingsSection(nil) { PolishStyleRow(model: model) }
 
             SettingsSection("듣기") {
-                SettingsRow(title: "인식 언어", subtitle: "회의록은 한국어로 받아 적습니다.") {
-                    PopupLabel(title: Prefs.locales.first { $0.id == model.localeID }?.title ?? model.localeID,
-                               options: Prefs.locales.map(\.title),
-                               selected: Prefs.locales.firstIndex { $0.id == model.localeID }) {
-                        model.localeID = Prefs.locales[$0].id
-                    }
-                }
                 SettingsRow(title: "음성 인식을 애플 서버에서 처리",
                             subtitle: "기본 켬. 더 정확하지만 인터넷이 필요하고 한 번에 약 1분까지 인식합니다. 끄면 인터넷 없이 이 맥에서만 인식하지만 정확도가 떨어집니다.") {
                     InkToggle(isOn: $model.forceServer)
@@ -375,9 +385,6 @@ struct DictationPane: View {
                     InkToggle(isOn: $model.showResultPopover)
                 }
             }
-
-            // 용어 교정은 받아쓰기와 회의록 **둘 다**에 걸린다(`Glossary.apply`). 설명에 적어 둔다.
-            UsageContextSection(model: model)
 
             Text("단축키는 어느 앱에서나 동작합니다. 다른 앱이 같은 조합을 쓰면 등록에 실패할 수 있습니다. ⌘ 단독 조합(⌘C 등)은 겹치기 쉬우니 ⌃⌥ 를 권합니다.")
                 .font(.system(size: 11)).foregroundColor(.text3)

@@ -334,7 +334,12 @@ if let i = CommandLine.arguments.firstIndex(of: "--whisper"), i + 1 < CommandLin
     } ?? ModelStore.transcriptionModel
     let started = Date()
     do {
-        let segments = try Whisper.transcribe(audio: audio, model: model)
+        // `--lang en` 으로 언어를 바꿔 가며 견줄 수 있다. 안 주면 지금 설정한 인식 언어다.
+        let lang = CommandLine.arguments.firstIndex(of: "--lang").flatMap { j in
+            j + 1 < CommandLine.arguments.count ? CommandLine.arguments[j + 1] : nil
+        } ?? String(Prefs.localeID.prefix(2))
+        print("언어 \(lang)")
+        let segments = try Whisper.transcribe(audio: audio, model: model, language: lang)
         let took = Date().timeIntervalSince(started)
         let text = segments.map(\.text).joined(separator: " ")
         print("OK \(String(format: "%.1f", took))초, 구간 \(segments.count)개, 글자 \(text.count)")
