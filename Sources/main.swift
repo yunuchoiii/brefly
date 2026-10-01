@@ -490,8 +490,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var modelDownloader: ModelDownloader?
     /// 회의록을 멈추라는 표. 1~2분 걸리는 일이라 중간에 그만둘 수 있어야 한다.
     private var meetingCancel: CancelToken?
-    /// 메뉴에 보여 줄 진행 문구. 메뉴를 열었을 때 어디쯤인지 알 수 있어야 한다.
-    private var meetingProgressLine: String?
+    /// 메뉴와 메뉴바에 보여 줄 진행 문구("받아쓰는 중", "요약하는 중"). 어디쯤인지 알 수 있어야 한다.
+    /// ⚠️ 바뀌면 메뉴바를 다시 그려야 한다. 그냥 두면 요약으로 넘어간 것이 안 보인다.
+    private var meetingProgressLine: String? { didSet { updateStatusTitle() } }
     /// 마지막 진행 상태. 팝오버를 닫거나 그 사이 받아쓰기를 하면 회의록 화면이 덮이는데,
     /// 그때 "진행 상황 보기"로 되돌아오려면 들고 있어야 한다.
     private var meetingRun: AppModel.MeetingRun?
@@ -1459,7 +1460,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                         attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)])
                     return
                 }
-                let label = ring.fraction.map { " \(Int($0 * 100))%" } ?? ""
+                // ⚠️ 퍼센트가 없을 땐 **단계 이름**을 적는다. 요약은 한 번에 답이 와서
+                //    `fraction` 이 nil 인데, 전에는 빈 글자가 돼서 받아쓰기 퍼센트가 100% 까지
+                //    오르다 갑자기 사라졌다. 로고는 계속 돌지만 멈춘 것처럼 보인다.
+                let label: String
+                if let fraction = ring.fraction {
+                    label = " \(Int(fraction * 100))%"
+                } else if let line = self.meetingProgressLine {
+                    label = " " + line
+                } else {
+                    label = ""
+                }
                 let dark = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
                 button.attributedTitle = NSAttributedString(
                     string: label, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .bold),
