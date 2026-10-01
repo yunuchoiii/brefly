@@ -237,11 +237,11 @@ struct MeetingResultView: View {
               + "고쳐 두신 내용은 사라집니다. 받아 적은 원문은 그대로입니다."
 
         let levels = Prefs.MeetingDetail.allCases
-        let popup = NSPopUpButton(frame: NSRect(x: 44, y: 0, width: 150, height: 25))
+        let popup = NSPopUpButton(frame: NSRect(x: 66, y: 0, width: 150, height: 25))
         popup.addItems(withTitles: levels.map(\.title))
         popup.selectItem(at: levels.firstIndex(of: retryDetail) ?? 2)
-        let label = NSTextField(labelWithString: "자세함")
-        label.frame = NSRect(x: 0, y: 4, width: 40, height: 18)
+        let label = NSTextField(labelWithString: "요약 정도")
+        label.frame = NSRect(x: 0, y: 4, width: 62, height: 18)
         label.font = .systemFont(ofSize: 12)
         let box = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 25))
         box.addSubview(label)

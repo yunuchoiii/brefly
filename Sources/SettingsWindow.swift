@@ -353,7 +353,7 @@ struct RecognitionPane: View {
                 }
                 // 회의록만 자세함을 고른다. 받아쓰기는 커서에 바로 들어가는 짧은 글이라
                 // 단계를 나눌 거리가 없다.
-                SettingsRow(title: "회의록 자세함", subtitle: model.meetingDetail.hint) {
+                SettingsRow(title: "회의록 요약 정도", subtitle: model.meetingDetail.hint) {
                     HStack(spacing: 10) {
                         DotSlider(index: Binding(
                             get: { model.meetingDetail.rawValue - 1 },
@@ -769,17 +769,20 @@ struct DotSlider: View {
         ZStack(alignment: .leading) {
             Capsule().fill(Color.lineStrong).frame(width: width, height: 2)
             Capsule().fill(Color.coral).frame(width: center(index), height: 2)
+            // ⚠️ 손잡이를 **점보다 먼저** 그리고 속을 비운다. 꽉 찬 손잡이를 점 위에 얹으면
+            //    고른 자리의 점이 가려져 양 끝에서 점이 네 개로 보인다. 고리로 두면 다섯 개가
+            //    늘 보이고, 고른 자리는 "점에 테두리가 둘린 것"으로 읽힌다.
+            Circle()
+                .fill(Color.paper)
+                .overlay(Circle().stroke(Color.coral, lineWidth: 2))
+                .frame(width: knob, height: knob)
+                .offset(x: center(index) - knob / 2)
             ForEach(0..<count, id: \.self) { i in
                 Circle()
                     .fill(i <= index ? Color.coral : Color.lineStrong)
                     .frame(width: tick, height: tick)
                     .offset(x: center(i) - tick / 2)
             }
-            Circle()
-                .fill(Color.coral)
-                .frame(width: knob, height: knob)
-                .overlay(Circle().stroke(Color.paper, lineWidth: 2.5))
-                .offset(x: center(index) - knob / 2)
         }
         .frame(width: width, height: knob)
         .contentShape(Rectangle())

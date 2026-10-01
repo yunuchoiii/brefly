@@ -204,7 +204,7 @@ if let i = CommandLine.arguments.firstIndex(of: "--summarize-transcript"), i + 1
         exit(0)
     }
     let done = DispatchSemaphore(value: 0)
-    print("원문 \(text.count)자로 요약 요청 (화자 앎: \(known), 자세함: \(detail.title))")
+    print("원문 \(text.count)자로 요약 요청 (화자 앎: \(known), 요약 정도: \(detail.title))")
     MeetingNotes.summarizeOnly(text, speakersKnown: known, detail: detail) { result in
         switch result {
         case .success(let notes): print("--- 회의록 ---"); print(notes)
