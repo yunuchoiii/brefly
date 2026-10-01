@@ -88,7 +88,7 @@ enum PreviewRenderer {
         // 회의록 탭. 시작 방법 셋과 최근 목록이 보여야 한다.
         model.meetingHistory = [
             // 제목은 회의록 `한 줄 요약` 에서 뽑아 40자에서 자른다. 목록에서 잘리는 모습을 봐야 한다.
-            MeetingRecord(id: "a", title: "출시 일정을 그대로 두고, 설치 안내는 단계를 늘리지 않는 쪽으로 정리하…",
+            MeetingRecord(id: "a", title: "출시 일정 확정과 설치 안내 정리",
                           date: Date().addingTimeInterval(-86400), kind: .videoCall,
                           seconds: 2112, todoCount: 3, notesPath: "/tmp/a.md", audioPath: "/tmp/a.m4a"),
             MeetingRecord(id: "b", title: "고객 인터뷰 — 3차",
@@ -136,6 +136,9 @@ enum PreviewRenderer {
 
         // 회의록 결과 창. 팝오버가 아니라 일반 창이라 크기를 못 박아 그린다.
         let sampleNotes = """
+        ## 제목
+        출시 일정 확정과 설치 안내 정리
+
         ## 한 줄 요약
         출시 일정을 그대로 두고, 설치 안내는 단계를 늘리지 않는 쪽으로 정리하기로 했다.
 
@@ -164,7 +167,9 @@ enum PreviewRenderer {
             // 제목은 이제 날짜가 아니라 `한 줄 요약` 첫 문장이다. 시안도 실제로 뽑아 쓴다.
             title: MeetingHistoryStore.titleFromNotes(sampleNotes) ?? "주간 기획 회의", audio: URL(fileURLWithPath: "/Users/me/문서/회의/주간 기획 회의.m4a"),
             notesFile: URL(fileURLWithPath: "/Users/me/문서/회의/주간 기획 회의 회의록.md"),
-            recordedAt: Date(), duration: 2112, notes: sampleNotes, segments: labelled,
+            // 앱은 `## 제목` 을 떼고 저장한다(제목은 창 머리에 있다). 시안도 같아야 한다.
+            recordedAt: Date(), duration: 2112,
+            notes: MeetingHistoryStore.stripTitleSection(sampleNotes), segments: labelled,
             transcript: labelled.map { "\($0.speaker ?? ""): \($0.text)" }.joined(separator: "\n"),
             speakersKnown: true,
             usedModel: ("ChatGPT", "gpt-5.5"),

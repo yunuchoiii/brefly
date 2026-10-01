@@ -153,38 +153,72 @@ enum MeetingHistoryStore {
         }
     }
 
-    /// 회의록 본문에서 제목을 뽑는다. `## 한 줄 요약` 아래 첫 문장이다.
+    /// 회의록 본문에서 제목을 뽑는다. `## 제목` 을 먼저 보고, 없으면 `## 한 줄 요약` 첫 문장이다.
     ///
-    /// 모델을 한 번 더 부르지 않는다 — 요약이 이미 "회의가 무엇을 다뤘고 무엇이 정해졌는지
-    /// 한 문장"을 쓰게 돼 있다. 받아쓰기 쪽 `HistoryStore.makeTitle` 과 같은 생각이다.
+    /// 모델을 한 번 더 부르지 않는다 — 같은 요약 호출 안에서 제목까지 받는다.
+    /// 받아쓰기 쪽 `HistoryStore.makeTitle` 과 같은 생각이다.
+    ///
+    /// ⚠️ 한국어 어미를 코드로 깎아 명사형을 만들지 않는다. "…하기로 했다" → "…결정" 같은 변환은
+    ///    규칙으로 하면 반드시 깨진다. 명사로 끝내라는 것은 프롬프트가 시킨다
+    ///    (`MeetingNotes.instruction` 의 `## 제목`).
     ///
     /// ⚠️ 못 뽑으면 nil 을 돌려준다. 부르는 쪽이 날짜-시각으로 물러선다 —
     ///    엉뚱한 제목보다 날짜가 낫다.
     static func titleFromNotes(_ notes: String) -> String? {
-        var inSummary = false
+        if let line = firstLine(of: "제목", in: notes) { return tidyTitle(line) }
+        // 옛 회의록과, `## 제목` 을 빼먹은 모델을 위한 대비책.
+        guard var line = firstLine(of: "한 줄 요약", in: notes) else { return nil }
+        // 한 문장만 쓴다. 두 문장이면 제목이 길어 목록에서 잘린다.
+        if let dot = line.range(of: "다. ") {
+            line = String(line[..<dot.upperBound]).trimmingCharacters(in: .whitespaces)
+        }
+        return tidyTitle(line)
+    }
+
+    /// 본문에서 `## 제목` 항목을 떼어 낸다. 제목은 창 머리와 파일 이름, `# ` 줄에 이미 있어서
+    /// 본문에까지 두면 같은 말이 두 번 보인다. 모델에게 받기는 하되 보관은 하지 않는다.
+    static func stripTitleSection(_ notes: String) -> String {
+        var out: [Substring] = []
+        var inTitle = false
+        for raw in notes.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("#") {
+                inTitle = line.hasPrefix("##") && line.contains("제목")
+                if inTitle { continue }
+            } else if inTitle {
+                continue
+            }
+            out.append(raw)
+        }
+        return out.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// `## <이름>` 아래 첫 내용 줄. 다음 항목으로 넘어가 버리면 비어 있던 것이므로 nil.
+    private static func firstLine(of section: String, in notes: String) -> String? {
+        var inSection = false
         for raw in notes.split(separator: "\n", omittingEmptySubsequences: false) {
             var line = raw.trimmingCharacters(in: .whitespaces)
             if line.hasPrefix("#") {
-                // 다른 항목으로 넘어갔으면 한 줄 요약이 비어 있던 것이다.
-                if inSummary { return nil }
-                inSummary = line.contains("한 줄 요약")
+                if inSection { return nil }
+                inSection = line.contains(section)
                 continue
             }
-            guard inSummary, !line.isEmpty else { continue }
+            guard inSection, !line.isEmpty else { continue }
             line = line.replacingOccurrences(of: "**", with: "")
             if line.hasPrefix("- ") { line = String(line.dropFirst(2)) }
-            // 한 문장만 쓴다. 두 문장이면 제목이 길어 목록에서 잘린다.
-            if let dot = line.range(of: "다. ") {
-                line = String(line[..<dot.upperBound]).trimmingCharacters(in: .whitespaces)
-            }
-            // 파일 이름에 못 쓰는 글자를 미리 치운다. `rename` 도 같은 일을 한다.
-            line = line.replacingOccurrences(of: "/", with: "-")
-                .replacingOccurrences(of: ":", with: "-")
-                .trimmingCharacters(in: CharacterSet(charactersIn: " .·"))
-            guard line.count >= 4 else { return nil }
-            return line.count > 40 ? line.prefix(40).trimmingCharacters(in: .whitespaces) + "…" : line
+            return line.trimmingCharacters(in: .whitespaces)
         }
         return nil
+    }
+
+    /// 파일 이름에 쓸 수 있게 다듬고 길이를 맞춘다.
+    private static func tidyTitle(_ raw: String) -> String? {
+        // `/` 와 `:` 는 파일 이름에 못 쓴다. `rename` 도 같은 일을 한다.
+        let line = raw.replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+            .trimmingCharacters(in: CharacterSet(charactersIn: " .·"))
+        guard line.count >= 4 else { return nil }
+        return line.count > 40 ? line.prefix(40).trimmingCharacters(in: .whitespaces) + "…" : line
     }
 
     /// 회의록 본문에서 "할 일"이 몇 개인지 센다. 그 항목 아래 불릿만 센다 —

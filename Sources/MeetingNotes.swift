@@ -13,7 +13,8 @@ enum MeetingNotes {
 
     struct Result {
         let transcript: String
-        let notes: String
+        /// ⚠️ `var` 다. `## 제목` 을 뽑은 뒤 본문에서 떼어 내려고 한 번 고쳐 쓴다.
+        var notes: String
         /// 시각이 붙은 낱말 묶음. 원문 탭이 "몇 분에 무슨 말을 했는지" 보여 주는 데 쓴다.
         /// 나중에 화자 구분이 들어오면 이 시각에 화자 구간을 겹쳐 맞춘다.
         let segments: [Whisper.Segment]
@@ -52,6 +53,8 @@ enum MeetingNotes {
         case noAPIKey
         case badResponse(Int, String)
         case emptyAnswer
+        /// 받아쓰긴 했는데 말이라 할 것이 없다. 오류가 아니라 "남길 것이 없다"는 뜻이다.
+        case noSpeech
 
         var errorDescription: String? {
             switch self {
@@ -61,6 +64,8 @@ enum MeetingNotes {
                 return "요약에 실패했습니다 (\(code)). \(body.prefix(140))"
             case .emptyAnswer:
                 return "요약이 비어 있습니다. 녹음이 너무 짧거나 말소리가 없는 것 같습니다."
+            case .noSpeech:
+                return "말한 내용이 없어 회의록을 만들지 않았습니다."
             }
         }
     }
@@ -87,6 +92,11 @@ enum MeetingNotes {
         - 받아쓰기라 잘못 들린 낱말이 섞여 있다. 앞뒤로 뜻이 통하는 쪽으로 읽되, 확신이 없으면 그대로 둔다.
 
         다음 차례로 쓴다. 해당하는 내용이 없는 항목은 통째로 뺀다.
+
+        ## 제목
+        목록에서 한눈에 알아볼 이름. 20자 안쪽으로 짧게.
+        ⚠️ **반드시 명사로 끝낸다** — "…논의", "…확정", "…점검", "…일정 조율".
+        "…했다", "…하기로 했다" 처럼 문장으로 맺지 않는다. 마침표도 찍지 않는다.
 
         ## 한 줄 요약
         회의가 무엇을 다뤘고 무엇이 정해졌는지 한 문장.
@@ -164,8 +174,9 @@ enum MeetingNotes {
             let heard = segments.map(\.text).joined(separator: " ")
             let transcript = Glossary.apply(to: heard)
             if transcript != heard { Log.write("회의록 용어 치환 적용") }
-            guard transcript.count > 30 else {
-                completion(.failure(Failure.emptyAnswer))
+            guard !isNoSpeech(transcript, segments: segments) else {
+                Log.write("회의록 건너뜀 — 말이 없다 (받아쓴 글 \(transcript.count)자)")
+                completion(.failure(Failure.noSpeech))
                 return
             }
             // 받아쓰기가 끝난 직후에도 한 번 본다. 여기서 안 막으면 취소해 놓고 요약 요청이 나간다.
@@ -184,6 +195,41 @@ enum MeetingNotes {
                                              summarizeStarted: summarizeStarted)))
             }
         }
+    }
+
+    /// 받아쓰긴 했지만 **말이라 할 것이 없는** 녹음인지 본다. 여기서 걸리면 회의록을 만들지도,
+    /// 기록에 남기지도 않는다.
+    ///
+    /// whisper 는 조용한 구간이나 잡음에서 말을 **지어낸다.** 실제로 나온 것들이다.
+    ///
+    ///     "다음 영상에서 만나요. 다음 영상에서 만나요. 다음 영상에서 만나요."   (38자)
+    ///     "아 으 으 으 으 … 으"                                          (57자)
+    ///
+    /// ⚠️ 짧은 **진짜** 회의를 같이 버리면 안 되므로 조건을 **겹쳐서** 건다. 실측한 회의 12건의
+    ///    받아쓴 글 길이는 이렇게 갈린다(2026-10-01).
+    ///
+    ///     진짜  150 · 214 · 509 · 608 · 1440 · 1571 · 2088 · 2466 · 6007 · 12408자
+    ///     지어낸 것  38 · 57자
+    ///
+    ///    길이만으로 자르지 않는다 — 30초짜리 진짜 회의가 80자일 수 있다. "짧다" **그리고**
+    ///    "같은 말만 되풀이한다 / 쓰인 음절이 몇 개 안 된다"일 때만 버린다.
+    static func isNoSpeech(_ transcript: String, segments: [Whisper.Segment]) -> Bool {
+        let letters = transcript.filter { !$0.isWhitespace && !$0.isPunctuation }
+        if letters.count <= 30 { return true }
+        guard letters.count < 100 else { return false }
+
+        // 화자 이름과 불릿은 내용이 아니다. 빼고 센다.
+        let spoken = Set(segments.map {
+            $0.text.replacingOccurrences(of: #"^\s*(나|상대)\s*:\s*|^\s*-\s*"#,
+                                         with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespaces)
+        }).filter { !$0.isEmpty }
+
+        // 같은 말만 되풀이했다. ("다음 영상에서 만나요." ×3)
+        if spoken.count == 1, segments.count >= 2 { return true }
+        // 쓰인 음절이 몇 개 안 된다. ("아 으 으 으 …" → 아, 으 둘뿐)
+        if Set(letters).count < 10 { return true }
+        return false
     }
 
     /// 요약 결과를 `Result` 로 엮는다. **실패해도 `.failure` 로 돌려주지 않는다** —
@@ -269,10 +315,6 @@ enum MeetingNotes {
                 // 용어 치환은 합친 글에 한 번만 건다.
                 let merged = Glossary.apply(to: EchoFilter.merge(mic: micSegments, system: systemSegments))
                 let transcribeSeconds = Date().timeIntervalSince(started)
-                guard merged.count > 30 else {
-                    completion(.failure(Failure.emptyAnswer))
-                    return
-                }
                 if cancel?.isCancelled == true {
                     completion(.failure(Whisper.Failure.cancelled))
                     return
@@ -282,6 +324,13 @@ enum MeetingNotes {
                 //    내 말 전부 → 상대 말 전부 순서로 나오고 시각이 중간에 0 으로 되돌아갔다.
                 //    에코도 안 걸러져서 상대 말이 두 번 보였다.
                 let shown = EchoFilter.labelled(mic: micSegments, system: systemSegments)
+                // ⚠️ `make` 와 **따로** 건다. 두 구현이 나뉘어 있어서, 한쪽에만 넣으면 실제
+                //    회의 녹음(이쪽)은 그냥 지나간다. 2026-10-01 에 한 번 그랬다.
+                guard !isNoSpeech(merged, segments: shown) else {
+                    Log.write("회의록 건너뜀 — 말이 없다 (받아쓴 글 \(merged.count)자)")
+                    completion(.failure(Failure.noSpeech))
+                    return
+                }
                 onTranscript?(merged, shown)
                 onProgress(Progress(stage: .summarizing, fraction: nil))
                 let summarizeStarted = Date()

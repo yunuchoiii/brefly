@@ -1432,11 +1432,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     /// 녹음 중 팝오버에 알림을 3초 띄운다. 겹쳐 눌러도 마지막 것만 남게 세어 둔다.
     private var noticeToken = 0
-    private func showNotice(_ message: String) {
+    private func showNotice(_ message: String, seconds: Double = 3) {
         noticeToken += 1
         let token = noticeToken
         model.notice = message
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
             guard let self, self.noticeToken == token else { return }
             self.model.notice = nil
         }
@@ -2253,6 +2253,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     self.meetingRing = nil
                     self.setState(self.state, message: error.localizedDescription)
                     Log.write("회의 녹음 회의록 끝남: \(error.localizedDescription)")
+                    // ⚠️ 말이 없던 녹음은 **오류가 아니다.** 기록에 남길 것이 없을 뿐이라
+                    //    알림창을 띄우지 않는다(받아쓰기의 "빈 녹음"과 같은 생각이다).
+                    //    대신 아무 일도 안 일어난 것으로 보이지 않게 팝오버에 적어 준다.
+                    if case MeetingNotes.Failure.noSpeech = error {
+                        self.showNotice(error.localizedDescription, seconds: 8)
+                        self.showPopover()
+                    }
                 }
             }
         })
@@ -2421,6 +2428,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let stem = notes.summaryFailed == nil
             ? (MeetingHistoryStore.titleFromNotes(notes.notes) ?? fallbackStem)
             : fallbackStem
+        // 제목은 위에서 뽑았다. 본문에 남겨 두면 창에서도 파일에서도 두 번 보인다.
+        var notes = notes
+        notes.notes = MeetingHistoryStore.stripTitleSection(notes.notes)
         let name = stem + " 회의록.md"
         var target = source.deletingLastPathComponent().appendingPathComponent(name)
         let body = "# " + stem + "\n\n" + notes.notes + "\n"

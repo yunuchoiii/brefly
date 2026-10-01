@@ -244,7 +244,7 @@ struct MeetingResultView: View {
                 switch result {
                 case .success(let notes):
                     let previous = document.notes
-                    document.notes = notes
+                    document.notes = MeetingHistoryStore.stripTitleSection(notes)
                     document.summaryFailed = nil
                     lastSummary = notes
                     document.usedModel = MeetingNotes.lastUsedModel

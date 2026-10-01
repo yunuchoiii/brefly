@@ -48,8 +48,12 @@ struct IdleView: View {
                 LogoMark(size: 26)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Brefly").font(.system(size: 15, weight: .bold)).foregroundColor(.ink)
-                    Text(model.micReady ? "대기 중 · 마이크 준비됨" : "마이크 권한이 필요해요.")
-                        .font(.system(size: 12)).foregroundColor(.text2)
+                    // 방금 무슨 일이 있었는지가 "대기 중"보다 중요하다. 잠깐 자리를 내준다.
+                    Text(model.notice ?? (model.micReady ? "대기 중 · 마이크 준비됨"
+                                                         : "마이크 권한이 필요해요."))
+                        .font(.system(size: 12, weight: model.notice == nil ? .regular : .semibold))
+                        .foregroundColor(model.notice == nil ? .text2 : .coral)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
                 Circle().fill(model.micReady ? Color.green : Color.coral).frame(width: 8, height: 8)
