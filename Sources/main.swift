@@ -759,7 +759,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         //       ×0.3 으로 낮춘다. 회의 중에 그러면 상대 말을 못 듣는다.
         //    화면이 겹치는 문제(어느 시계를 보여 줄지, 팝오버에 무엇을 띄울지)도 여기서 사라진다.
         if meetingRecorder != nil, !recorder.isRunning {
-            let message = "회의를 녹음하는 중에는 받아쓰기를 할 수 없습니다."
+            let message = "회의를 녹음하는 동안에는 받아쓰기를 쓸 수 없어요."
             setState(state, message: message)
             showNotice(message)
             showPopover()
@@ -2000,7 +2000,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// 정리 중(`.polishing`)은 마이크를 이미 놓았으므로 막지 않는다.
     private func dictationBlocksMeeting() -> Bool {
         guard recorder.isRunning else { return false }
-        let message = "받아쓰기를 끝내고 다시 눌러 주세요."
+        let message = "회의 녹음은 받아쓰기를 마친 뒤 시작할 수 있어요."
         setState(state, message: message)
         showNotice(message)
         showPopover()
@@ -2073,6 +2073,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             //    전에는 회의 녹음 중에 받아쓰기를 한 번 하면 **녹음 화면으로 영영 못 돌아갔다** —
             //    메뉴바 시계는 흐르는데 팝오버에는 끝내는 버튼이 없어 멈출 수가 없었다.
             self.meetingRecordingRun = run
+            // 어떤 마이크로 담고 있는지 녹음 중에 보여 준다. 끝나고서야 알면 되돌릴 수 없다.
+            self.model.micName = AVCaptureDevice.default(for: .audio)?.localizedName
             self.model.phase = .meetingRecording(run)
             self.showPopover()
             self.startMeetingLevelTimer(recorder)
@@ -2153,6 +2155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         let on = recorder.toggleHighlight()
         model.highlightOn = on
+        model.highlightStartedAt = on ? Date() : nil
         model.highlightCount = recorder.highlights.count
         setState(state, message: on ? "하이라이트 시작 — 다시 누르면 끝납니다."
                                     : "하이라이트 \(recorder.highlights.count)곳")
@@ -2165,6 +2168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let wasOpen = recorder.closeOpenHighlight()
         meetingRecorder = nil
         meetingRecordingRun = nil
+        model.highlightStartedAt = nil
         meetingLevelTimer?.invalidate()
         meetingLevelTimer = nil
         meetingClockTimer?.invalidate()

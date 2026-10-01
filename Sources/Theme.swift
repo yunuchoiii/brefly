@@ -48,6 +48,17 @@ enum Theme {
     static let darkMuted = NSColor(hex: 0x565b66)
     static let darkText  = NSColor(hex: 0xcdd1d8)
     static let darkSub   = NSColor(hex: 0x9ba0a9)
+    // 녹음 팝오버 하단 바(2026-10-01 시안 `녹음 팝업 개선.dc.html` 1d·2a).
+    // 패널보다 한 단계 어둡게 깔아 "여긴 본문이 아니다"를 색으로 말한다.
+    static let darkBar     = NSColor(hex: 0x191b21)
+    static let darkBarLine = NSColor(hex: 0x2e323a)
+    /// 하단 바 글자와 "아직 확정 안 된 말". 본문(darkText)보다 흐리고 darkMuted 보다는 읽힌다.
+    static let darkFaint   = NSColor(hex: 0x7d828c)
+    /// 빈 입력 자리("말씀하세요").
+    static let darkHint    = NSColor(hex: 0x6a6f79)
+    /// 어두운 바탕 위 코랄 글자. 코랄 원색은 이 배경에서 대비가 모자란다.
+    static let coralOnDark = NSColor(hex: 0xff8a73)
+    static let darkWave    = NSColor(hex: 0x4a4f59)
 }
 
 extension Theme {
@@ -113,6 +124,15 @@ extension Color {
     static let darkMuted  = Color(nsColor: Theme.darkMuted)
     static let darkText   = Color(nsColor: Theme.darkText)
     static let darkSub    = Color(nsColor: Theme.darkSub)
+    static let darkBar     = Color(nsColor: Theme.darkBar)
+    static let darkBarLine = Color(nsColor: Theme.darkBarLine)
+    static let darkFaint   = Color(nsColor: Theme.darkFaint)
+    static let darkHint    = Color(nsColor: Theme.darkHint)
+    static let coralOnDark = Color(nsColor: Theme.coralOnDark)
+    /// 어두운 팝오버 위의 본문 글자. `ink` 는 모드에 따라 뒤집히므로 여기선 못 쓴다.
+    static let darkTextMain = Color(nsColor: Theme.darkTextMain)
+    /// 파형에서 소리가 없는 막대. `darkMuted` 보다 가라앉혀 코랄 막대가 도드라지게 한다.
+    static let darkWave     = Color(nsColor: Theme.darkWave)
 }
 
 // MARK: - 로고 "말의 파형이 하나의 점(요점)으로"

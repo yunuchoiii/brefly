@@ -48,6 +48,9 @@ enum PreviewRenderer {
         model.levels = [0.95, 0.8, 0.62, 0.5, 0.4, 0.33, 0.28, 0.22, 0.16, 0.12, 0.08]
         model.partialText = samples[0].raw.prefix(150) + " 그리고 아까 말했던 단축키 안내도"
         snap("1b-recording")
+        model.notice = "회의 녹음은 받아쓰기를 마친 뒤 시작할 수 있어요."
+        snap("1b-recording-blocked")
+        model.notice = nil
 
         model.phase = .done(samples[0], .copied)
         model.rawExpanded = false
@@ -107,17 +110,31 @@ enum PreviewRenderer {
 
         // 회의를 지금 녹음하는 중. 시스템 소리를 못 잡는 경우도 같이 본다 —
         // 그때는 화상회의에서 내 말만 남으므로 경고가 보여야 한다.
+        model.micName = "MacBook Pro 마이크"
         model.phase = .meetingRecording(AppModel.MeetingRecordingRun(
             startedAt: Date().addingTimeInterval(-372), capturingSystem: true, inPerson: false))
         snap("1e-meeting-recording-video")
+        // 화면 기록 권한이 없어 상대 목소리를 못 잡는 모습. 모르고 회의를 다 녹음하면 되돌릴 수 없다.
+        model.phase = .meetingRecording(AppModel.MeetingRecordingRun(
+            startedAt: Date().addingTimeInterval(-372), capturingSystem: false, inPerson: false))
+        snap("1e-meeting-recording-no-system")
         model.phase = .meetingRecording(AppModel.MeetingRecordingRun(
             startedAt: Date().addingTimeInterval(-372), capturingSystem: false, inPerson: true))
         snap("1e-meeting-recording-in-person")
         // 회의 중 받아쓰기 단축키를 눌렀을 때. 막았다는 것이 **화면에** 보여야 한다 —
         // 메뉴바 글자만으로는 눌러도 아무 일 없는 것으로 읽힌다.
-        model.notice = "회의를 녹음하는 중에는 받아쓰기를 할 수 없습니다."
+        model.notice = "회의를 녹음하는 동안에는 받아쓰기를 쓸 수 없어요."
         snap("1e-meeting-recording-blocked")
         model.notice = nil
+        // 하이라이트 두 곳을 남긴 모습과, 지금 켜 둔 모습. 시안 2a 의 나머지 두 상태다.
+        model.highlightCount = 2
+        snap("1e-meeting-recording-marks")
+        model.highlightOn = true
+        model.highlightStartedAt = Date().addingTimeInterval(-7)
+        snap("1e-meeting-recording-highlighting")
+        model.highlightOn = false
+        model.highlightStartedAt = nil
+        model.highlightCount = 0
 
         model.retryRecord = samples[0]
         model.phase = .error("정리에 실패해서 원문을 그대로 복사했어요\n\n"

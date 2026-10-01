@@ -80,6 +80,13 @@ final class AppModel: ObservableObject {
     @Published var resultShownAt: Date?
 
     /// 지금 중요 표시가 켜져 있나. 녹음 화면에 드러낸다 — 켜 둔 줄 모르면 끄지도 못한다.
+    /// 지금 쓰는 마이크 이름("MacBook Pro 마이크"). 회의 녹음 팝오버가 제목 아래에 적는다 —
+    /// 엉뚱한 입력 장치로 회의를 통째로 녹음하는 사고를 **녹음 중에** 알아챌 수 있어야 한다.
+    @Published var micName: String?
+
+    /// 지금 켜 둔 하이라이트가 시작한 시각. 켜져 있는 동안 구간 길이를 보여 준다.
+    @Published var highlightStartedAt: Date?
+
     @Published var highlightOn = false
     /// 이번 녹음에서 표시한 대목 수.
     @Published var highlightCount = 0
