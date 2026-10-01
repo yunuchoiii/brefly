@@ -89,6 +89,9 @@ struct MeetingResultView: View {
     @State private var draft = ""
     @State private var toast: String?
     @State private var retrying = false
+    /// "다시 요약"에서 고른 자세함. 설정값에서 시작하고, 이 창에서 고른 것은 창이 살아 있는 동안 남는다 —
+    /// 한 번 더 눌러 볼 때 같은 단계를 다시 고르게 하지 않는다.
+    @State private var retryDetail = Prefs.meetingDetail
     /// 모델이 마지막으로 낸 글. 사용자가 고쳤는지 가리는 기준이다.
     /// 이름이 바뀌면 팝오버 목록도 따라 바뀌어야 한다.
     var onRenamed: (() -> Void)? = nil
@@ -188,7 +191,7 @@ struct MeetingResultView: View {
                     .lineLimit(2).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
-            OutlineButton(retrying ? "요약하는 중…" : "다시 요약", wide: false) { retrySummary() }
+            OutlineButton(retrying ? "요약하는 중…" : "다시 요약", wide: false) { askRetry() }
                 .disabled(retrying)
         }
         .padding(.horizontal, 20).padding(.vertical, 12)
@@ -221,16 +224,34 @@ struct MeetingResultView: View {
         flash("이름을 바꿨습니다.")
     }
 
-    /// 고쳐 둔 글이 있으면 먼저 묻는다. 모델 결과로 덮어쓰면 사용자가 쓴 것이 사라진다.
+    /// 다시 요약하기 전에 **얼마나 자세히 쓸지** 고르게 한다. 첫 요약은 설정대로 하지만,
+    /// 받아 보고 "너무 짧다 / 너무 길다"를 아는 것은 이때다.
+    ///
+    /// 고쳐 둔 글이 있으면 사라진다는 것도 같이 알린다 — 모델 결과로 덮어쓰기 때문이다.
     private func askRetry() {
-        guard document.notes != lastSummary else { retrySummary(); return }
         let alert = NSAlert()
         alert.messageText = "다시 요약할까요?"
-        alert.informativeText = "지금 회의록을 모델이 새로 쓴 것으로 바꿉니다. "
-            + "고쳐 두신 내용은 사라집니다. 받아 적은 원문은 그대로입니다."
+        alert.informativeText = document.notes == lastSummary
+            ? "받아 적은 원문으로 요약만 다시 만듭니다. 원문은 그대로입니다."
+            : "지금 회의록을 모델이 새로 쓴 것으로 바꿉니다. "
+              + "고쳐 두신 내용은 사라집니다. 받아 적은 원문은 그대로입니다."
+
+        let levels = Prefs.MeetingDetail.allCases
+        let popup = NSPopUpButton(frame: NSRect(x: 44, y: 0, width: 150, height: 25))
+        popup.addItems(withTitles: levels.map(\.title))
+        popup.selectItem(at: levels.firstIndex(of: retryDetail) ?? 2)
+        let label = NSTextField(labelWithString: "자세함")
+        label.frame = NSRect(x: 0, y: 4, width: 40, height: 18)
+        label.font = .systemFont(ofSize: 12)
+        let box = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 25))
+        box.addSubview(label)
+        box.addSubview(popup)
+        alert.accessoryView = box
+
         alert.addButton(withTitle: "다시 요약")
         alert.addButton(withTitle: "취소")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
+        retryDetail = levels[min(popup.indexOfSelectedItem, levels.count - 1)]
         retrySummary()
     }
 
@@ -238,7 +259,8 @@ struct MeetingResultView: View {
     private func retrySummary() {
         guard !retrying, !document.transcript.isEmpty else { return }
         retrying = true
-        MeetingNotes.summarizeOnly(document.transcript, speakersKnown: document.speakersKnown) { result in
+        MeetingNotes.summarizeOnly(document.transcript, speakersKnown: document.speakersKnown,
+                                   detail: retryDetail) { result in
             DispatchQueue.main.async {
                 retrying = false
                 switch result {

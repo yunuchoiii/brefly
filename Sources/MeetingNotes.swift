@@ -83,7 +83,16 @@ enum MeetingNotes {
 
         """
 
-    private static let instruction = """
+    /// 회의록 지시문. 받아쓰기 프롬프트와 완전히 따로 둔다.
+    ///
+    /// **지어내지 말라**를 가장 앞에 둔다. 긴 글을 넣으면 모델이 회의록의 꼴을 갖추려고
+    /// 없는 담당자와 마감을 채워 넣는다. 회의록은 그러면 못 쓴다 — 틀린 회의록은 없느니만 못하다.
+    ///
+    /// `detail` 은 **담는 항목과 깊이**를 바꾼다. 분량을 늘리라고 시키지 않는다 —
+    /// 그렇게 하면 모델이 빈 자리를 추측으로 메운다. 자세한 단계일수록 "원문에 있는 것을 더
+    /// 많이 담되 없는 것은 보태지 말라"를 **한 번 더** 못 박는다.
+    static func instruction(_ detail: Prefs.MeetingDetail) -> String {
+        let head = """
         아래 <회의록> 안은 회의를 받아쓴 것이다. 이것을 회의록으로 정리한다.
 
         가장 중요한 규칙: **원문에 없는 것을 절대 만들지 않는다.**
@@ -116,15 +125,75 @@ enum MeetingNotes {
 
         ⚠️ 위 꺾쇠는 자리를 보여 주는 표시일 뿐이다. **꺾쇠 안의 말을 결과에 그대로 쓰지 않는다.**
         사람 이름·직함·회사·날짜는 원문에서 실제로 들린 것만 쓴다.
+        """
 
-        ## 논의한 것
-        - 결론이 안 난 것, 의견이 갈린 것. 왜 갈렸는지까지.
+        let body: String
+        switch detail {
+        case .brief:
+            body = """
 
-        ## 다음에 볼 것
-        - 다음 회의나 후속으로 넘긴 것.
+            여기까지만 쓴다. '논의한 것'과 '다음에 볼 것'은 **쓰지 않는다.**
+            '결정된 것'과 '할 일'은 가장 중요한 것 세 개까지만 남긴다.
+            """
+        case .short:
+            body = """
+
+            ## 논의한 것
+            - 무엇을 이야기했는지 한 줄씩. 세 개까지.
+
+            '다음에 볼 것'은 쓰지 않는다.
+            """
+        case .normal:
+            body = """
+
+            ## 논의한 것
+            - 결론이 안 난 것, 의견이 갈린 것. 왜 갈렸는지까지.
+
+            ## 다음에 볼 것
+            - 다음 회의나 후속으로 넘긴 것.
+            """
+        case .detailed:
+            body = """
+
+            ## 논의한 것
+            - 결론이 안 난 것, 의견이 갈린 것. 왜 갈렸는지까지.
+            - 어느 쪽이 무엇을 근거로 들었는지 하위 불릿으로 받친다.
+
+            ## 다음에 볼 것
+            - 다음 회의나 후속으로 넘긴 것.
+
+            이 단계에서는 **개수를 줄이지 않는다.** 원문에서 오간 숫자·날짜·금액·이름·제품명을
+            빠뜨리지 말고 그대로 적는다.
+            ⚠️ 자세히 쓰라는 것은 **원문에 있는 것을 더 많이 담으라**는 뜻이다. 원문에 없는
+            배경 설명이나 추측을 보태라는 뜻이 **아니다.** 담을 것이 없으면 짧게 끝낸다.
+            """
+        case .full:
+            body = """
+
+            ## 논의한 것
+            - 결론이 안 난 것, 의견이 갈린 것. 왜 갈렸는지까지.
+            - 어느 쪽이 무엇을 근거로 들었는지 하위 불릿으로 받친다.
+
+            ## 다음에 볼 것
+            - 다음 회의나 후속으로 넘긴 것.
+
+            ## 회의 흐름
+            - 이야기가 오간 차례를 처음부터 끝까지 훑는다. 주제가 바뀐 자리마다 한 불릿.
+            - 원문에서 쓴 표현을 되도록 그대로 쓴다. 바꿔 말하면 뜻이 틀어진다.
+
+            이 단계에서는 **개수를 줄이지 않는다.** 원문에서 오간 숫자·날짜·금액·이름·제품명을
+            빠뜨리지 말고 그대로 적는다.
+            ⚠️ 가장 자세한 단계지만 **지어내기는 여전히 금지다.** 분량을 채우려고 원문에 없는
+            말을 보태면 회의록을 통째로 못 쓰게 된다. 원문이 짧으면 결과도 짧아야 맞다.
+            """
+        }
+
+        return head + body + """
+
 
         문체는 '~다'로 쓴다. 인사말·잡담·같은 말 반복은 버린다.
         """
+    }
 
     /// 어느 단계에 있고 얼마나 왔는지. 메뉴바 고리와 팝오버가 같은 값을 쓴다.
     struct Progress {
@@ -388,9 +457,11 @@ enum MeetingNotes {
     ///    호출 코드가 두 벌이 된 셈인데, 받아쓰기 쪽을 건드려 짧은 말 처리를 흔드는 것보다 낫다고 봤다.
     /// 이미 받아 적어 둔 글로 요약만 다시 부른다. 요약이 503 으로 죽어도 받아쓰기를
     /// 4분 30초 다시 돌리지 않게 하려고 연다. `--summarize-transcript` 와 "다시 요약"이 쓴다.
+    /// - Parameter detail: 안 주면 설정값을 쓴다. "다시 요약"은 그때 고른 단계를 넣는다.
     static func summarizeOnly(_ transcript: String, speakersKnown: Bool = false,
+                              detail: Prefs.MeetingDetail = Prefs.meetingDetail,
                               completion: @escaping (Swift.Result<String, Error>) -> Void) {
-        summarize(transcript, speakersKnown: speakersKnown, completion: completion)
+        summarize(transcript, speakersKnown: speakersKnown, detail: detail, completion: completion)
     }
 
     /// 마지막으로 성공한 회사·모델. "다시 요약" 뒤에 표시를 갱신할 때 쓴다.
@@ -408,6 +479,7 @@ enum MeetingNotes {
     /// ⚠️ 0.8.2 까지는 설정을 아예 안 보고 Gemini 로만 갔다.
     private static func summarize(_ transcript: String, speakersKnown: Bool = false,
                                   highlightNote: String = "",
+                                  detail: Prefs.MeetingDetail = Prefs.meetingDetail,
                                   completion: @escaping (Swift.Result<String, Error>) -> Void) {
         // AUTO 면 키가 있는 회사를 **가성비 순으로 줄 세워** 차례로 시도한다.
         // 하나도 없으면 Gemini 를 시도해 "키가 없습니다" 안내가 나가게 둔다 —
@@ -422,7 +494,7 @@ enum MeetingNotes {
                : Prefs.autoCandidates(for: .meeting))
             : [Prefs.meetingChoice]
         Log.write("회의록 요약 차례: " + chain.map(\.title).joined(separator: " → "))
-        tryChoice(transcript, speakersKnown: speakersKnown, highlightNote: highlightNote,
+        tryChoice(transcript, speakersKnown: speakersKnown, highlightNote: highlightNote, detail: detail,
                   chain: chain, index: 0, completion: completion)
     }
 
@@ -431,19 +503,20 @@ enum MeetingNotes {
     private static var lastUsed: (label: String, name: String)?
 
     private static func tryChoice(_ transcript: String, speakersKnown: Bool, highlightNote: String,
+                                  detail: Prefs.MeetingDetail,
                                   chain: [Prefs.Choice], index: Int,
                                   completion: @escaping (Swift.Result<String, Error>) -> Void) {
         let chosen = chain[index]
         let models = Prefs.modelNames(chosen.backend, chosen.tier)
         Log.write("회의록 요약: \(chosen.backend.shortTitle) \(chosen.tier.suffix) — \(models.first ?? "?")")
-        attempt(transcript, speakersKnown: speakersKnown, highlightNote: highlightNote,
+        attempt(transcript, speakersKnown: speakersKnown, highlightNote: highlightNote, detail: detail,
                 backend: chosen.backend, models: models.isEmpty ? [Prefs.geminiModel] : models,
                 modelIndex: 0, tryIndex: 0) { result in
             if case .failure(let error) = result, index + 1 < chain.count {
                 Log.write("회의록 \(chosen.backend.shortTitle) 실패 — \(chain[index + 1].title) 로 넘어감: "
                           + error.localizedDescription.prefix(80))
                 tryChoice(transcript, speakersKnown: speakersKnown, highlightNote: highlightNote,
-                          chain: chain, index: index + 1, completion: completion)
+                          detail: detail, chain: chain, index: index + 1, completion: completion)
                 return
             }
             completion(result)
@@ -452,11 +525,12 @@ enum MeetingNotes {
 
     /// 같은 모델로 `retryDelays` 만큼 물러서며 다시 걸고, 다 쓰면 다음 모델로 넘어간다.
     private static func attempt(_ transcript: String, speakersKnown: Bool, highlightNote: String = "",
+                                detail: Prefs.MeetingDetail,
                                 backend: Prefs.Backend, models: [String],
                                 modelIndex: Int, tryIndex: Int,
                                 completion: @escaping (Swift.Result<String, Error>) -> Void) {
         let model = models[min(modelIndex, models.count - 1)]
-        call(transcript, speakersKnown: speakersKnown, highlightNote: highlightNote,
+        call(transcript, speakersKnown: speakersKnown, highlightNote: highlightNote, detail: detail,
              backend: backend, model: model) { result in
             switch result {
             case .success:
@@ -471,6 +545,7 @@ enum MeetingNotes {
                     Log.write("요약 재시도 — \(model), \(wait)초 뒤 (\(error.localizedDescription.prefix(60)))")
                     DispatchQueue.global().asyncAfter(deadline: .now() + wait) {
                         attempt(transcript, speakersKnown: speakersKnown, highlightNote: highlightNote,
+                                detail: detail,
                                 backend: backend, models: models,
                                 modelIndex: modelIndex, tryIndex: tryIndex + 1, completion: completion)
                     }
@@ -479,6 +554,7 @@ enum MeetingNotes {
                 if modelIndex + 1 < models.count {
                     Log.write("요약 모델 바꿈 — \(model) → \(models[modelIndex + 1])")
                     attempt(transcript, speakersKnown: speakersKnown, highlightNote: highlightNote,
+                            detail: detail,
                             backend: backend, models: models,
                             modelIndex: modelIndex + 1, tryIndex: 0, completion: completion)
                     return
@@ -502,9 +578,10 @@ enum MeetingNotes {
     /// 고른 회사로 보낸다. 회의록은 글이 길어서(48분이면 4만 자) 받아쓰기 쪽 클라이언트를
     /// 그대로 쓰지 않는다 — 거기는 출력이 2048 토큰으로 묶여 있어 중간에 잘린다.
     private static func call(_ transcript: String, speakersKnown: Bool, highlightNote: String = "",
+                             detail: Prefs.MeetingDetail,
                              backend: Prefs.Backend, model: String,
                              completion: @escaping (Swift.Result<String, Error>) -> Void) {
-        let system = (speakersKnown ? speakerNote : "") + highlightNote + instruction
+        let system = (speakersKnown ? speakerNote : "") + highlightNote + instruction(detail)
         let user = "<회의록>\n\(transcript)\n</회의록>"
         switch backend {
         case .openai:
@@ -520,11 +597,13 @@ enum MeetingNotes {
             ClaudeClient.shared.raw(system: system, user: user, model: model,
                                     maxTokens: 24000, timeout: 300) { completion($0.map(tidy)) }
         default:
-            callGemini(transcript, speakersKnown: speakersKnown, model: model, completion: completion)
+            callGemini(transcript, speakersKnown: speakersKnown, detail: detail,
+                       model: model, completion: completion)
         }
     }
 
-    private static func callGemini(_ transcript: String, speakersKnown: Bool, model: String,
+    private static func callGemini(_ transcript: String, speakersKnown: Bool,
+                                   detail: Prefs.MeetingDetail, model: String,
                                    completion: @escaping (Swift.Result<String, Error>) -> Void) {
         guard let key = KeychainStore.read(.gemini), !key.isEmpty else {
             completion(.failure(Failure.noAPIKey))
@@ -537,7 +616,7 @@ enum MeetingNotes {
         }
 
         let body: [String: Any] = [
-            "contents": [["parts": [["text": "\(speakersKnown ? speakerNote : "")\(instruction)\n\n<회의록>\n\(transcript)\n</회의록>"]]]],
+            "contents": [["parts": [["text": "\(speakersKnown ? speakerNote : "")\(instruction(detail))\n\n<회의록>\n\(transcript)\n</회의록>"]]]],
             "generationConfig": [
                 "temperature": 0.2,
                 // 회의록은 길다. 받아쓰기 쪽 2048 로는 표가 중간에 끊긴다.

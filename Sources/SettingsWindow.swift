@@ -65,6 +65,7 @@ final class SettingsModel: ObservableObject {
     @Published var backend = Prefs.backend                    { didSet { Prefs.backend = backend; changed() } }
     @Published var tier = Prefs.tier                          { didSet { Prefs.tier = tier; changed() } }
     @Published var meetingBackend = Prefs.meetingBackend      { didSet { Prefs.meetingBackend = meetingBackend; changed() } }
+    @Published var meetingDetail = Prefs.meetingDetail        { didSet { Prefs.meetingDetail = meetingDetail; changed() } }
     @Published var meetingTier = Prefs.meetingTier            { didSet { Prefs.meetingTier = meetingTier; changed() } }
     @Published var style = Prefs.style                        { didSet { Prefs.style = style; changed() } }
     @Published var geminiModel = Prefs.geminiModel            { didSet { Prefs.geminiModel = geminiModel; changed() } }
@@ -348,6 +349,15 @@ struct RecognitionPane: View {
                 SettingsRow(title: "회의록 요약", subtitle: meetingHint) {
                     choicePicker(Prefs.Choice(backend: model.meetingBackend, tier: model.meetingTier)) {
                         model.meetingBackend = $0.backend; model.meetingTier = $0.tier
+                    }
+                }
+                // 회의록만 자세함을 고른다. 받아쓰기는 커서에 바로 들어가는 짧은 글이라
+                // 단계를 나눌 거리가 없다.
+                SettingsRow(title: "회의록 자세함", subtitle: model.meetingDetail.hint) {
+                    PopupLabel(title: model.meetingDetail.title,
+                               options: Prefs.MeetingDetail.allCases.map(\.title),
+                               selected: Prefs.MeetingDetail.allCases.firstIndex(of: model.meetingDetail)) {
+                        model.meetingDetail = Prefs.MeetingDetail.allCases[$0]
                     }
                 }
                 PolishStyleRow(model: model)

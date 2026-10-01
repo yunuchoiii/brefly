@@ -293,6 +293,41 @@ enum Prefs {
         set { d.set(newValue.rawValue, forKey: "meetingBackend") }
     }
 
+    /// 회의록을 얼마나 자세히 쓸지. 1~5 단계이고 기본은 3(보통)이다.
+    ///
+    /// 단계가 올라가면 **담는 항목과 깊이**가 늘어난다. 분량을 늘리라는 뜻이 아니다 —
+    /// 그렇게 시키면 모델이 원문에 없는 배경·추측을 보태 회의록을 통째로 못 쓰게 만든다.
+    /// 어떤 단계에서도 "원문에 없는 것을 만들지 않는다"가 먼저다(`MeetingNotes.instruction`).
+    enum MeetingDetail: Int, CaseIterable {
+        case brief = 1, short, normal, detailed, full
+
+        var title: String {
+            switch self {
+            case .brief:    return "아주 짧게"
+            case .short:    return "짧게"
+            case .normal:   return "보통"
+            case .detailed: return "자세히"
+            case .full:     return "아주 자세히"
+            }
+        }
+
+        /// 설정 화면에 적을 한 줄. 무엇이 늘고 주는지를 말한다.
+        var hint: String {
+            switch self {
+            case .brief:    return "결정된 것과 할 일만 추립니다. 길어야 대여섯 줄입니다."
+            case .short:    return "결정된 것과 할 일에, 무엇을 논의했는지를 한 줄씩 더합니다."
+            case .normal:   return "결정·할 일·논의한 것·다음에 볼 것을 고루 담습니다."
+            case .detailed: return "오간 숫자와 날짜, 의견이 갈린 까닭까지 빠짐없이 담습니다."
+            case .full:     return "이야기가 오간 차례까지 담습니다. 회의에 못 온 사람이 읽을 때 씁니다."
+            }
+        }
+    }
+
+    static var meetingDetail: MeetingDetail {
+        get { MeetingDetail(rawValue: d.object(forKey: "meetingDetail") as? Int ?? 3) ?? .normal }
+        set { d.set(newValue.rawValue, forKey: "meetingDetail") }
+    }
+
     static var meetingTier: Tier {
         get { Tier(rawValue: d.string(forKey: "meetingTier") ?? "") ?? .quality }
         set { d.set(newValue.rawValue, forKey: "meetingTier") }

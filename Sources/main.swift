@@ -194,9 +194,18 @@ if let i = CommandLine.arguments.firstIndex(of: "--summarize-transcript"), i + 1
         exit(1)
     }
     let known = CommandLine.arguments.contains("--speakers-known")
+    // `--detail 1`~`5` 로 자세함을 바꿔 가며 같은 원문을 돌려 볼 수 있다. 안 주면 설정값이다.
+    let detail = CommandLine.arguments.firstIndex(of: "--detail")
+        .flatMap { $0 + 1 < CommandLine.arguments.count ? Int(CommandLine.arguments[$0 + 1]) : nil }
+        .flatMap { Prefs.MeetingDetail(rawValue: $0) } ?? Prefs.meetingDetail
+    // 모델을 안 부르고 넘어갈 요청문만 보고 싶을 때. 단계별로 무엇이 달라지는지 여기서 본다.
+    if CommandLine.arguments.contains("--show-prompt") {
+        print(MeetingNotes.instruction(detail))
+        exit(0)
+    }
     let done = DispatchSemaphore(value: 0)
-    print("원문 \(text.count)자로 요약 요청 (화자 앎: \(known))")
-    MeetingNotes.summarizeOnly(text, speakersKnown: known) { result in
+    print("원문 \(text.count)자로 요약 요청 (화자 앎: \(known), 자세함: \(detail.title))")
+    MeetingNotes.summarizeOnly(text, speakersKnown: known, detail: detail) { result in
         switch result {
         case .success(let notes): print("--- 회의록 ---"); print(notes)
         case .failure(let error): print("FAIL \(error.localizedDescription)")
