@@ -2133,8 +2133,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         meetingClockTimer?.invalidate()
         meetingClockTimer = nil
         meetingRecordingStartedAt = nil
-        model.meetingMicLevels = Array(repeating: 0, count: 11)
-        model.meetingSystemLevels = Array(repeating: 0, count: 11)
+        model.meetingMicLevels = Array(repeating: 0, count: AppModel.levelCount)
+        model.meetingSystemLevels = Array(repeating: 0, count: AppModel.levelCount)
         Task { @MainActor in
             let session = await recorder.stop()
             // 버리기로 한 녹음을 디스크에 남겨 두지 않는다. 목소리다.
@@ -2174,8 +2174,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         meetingClockTimer?.invalidate()
         meetingClockTimer = nil
         meetingRecordingStartedAt = nil
-        model.meetingMicLevels = Array(repeating: 0, count: 11)
-        model.meetingSystemLevels = Array(repeating: 0, count: 11)
+        model.meetingMicLevels = Array(repeating: 0, count: AppModel.levelCount)
+        model.meetingSystemLevels = Array(repeating: 0, count: AppModel.levelCount)
         setState(state, message: "녹음을 마치는 중…")
         Task { @MainActor in
             guard let session = await recorder.stop() else {

@@ -422,6 +422,14 @@ struct Waveform: View {
         }
     }
 
+    /// 레벨을 막대 높이로. **그대로 곱하지 않는다** — 사람 말소리의 레벨은 0.2~0.4 에 몰려 있어서
+    /// 선형으로 그리면 막대가 바닥에 깔린다(2026-10-01 "파형 높이가 너무 낮다"). 제곱근 쪽으로
+    /// 휘어 중간값을 끌어올린다. 0 과 1 은 그대로라 "소리 없음"과 "가득"은 거짓이 되지 않는다.
+    private func barHeight(_ level: CGFloat) -> CGFloat {
+        let shaped = pow(max(0, min(1, level)), 0.55)
+        return max(3, 3 + shaped * (height - 3))
+    }
+
     private func row(_ count: Int) -> some View {
         HStack(alignment: .center, spacing: spacing) {
             ForEach(0..<count, id: \.self) { i in
@@ -431,7 +439,7 @@ struct Waveform: View {
                 let hot = CGFloat(distance) < CGFloat(count) * 0.25
                 RoundedRectangle(cornerRadius: width / 2)
                     .fill(hot ? Color.coral : Color.darkWave)
-                    .frame(width: width, height: max(3, 3 + level * (height - 3)))
+                    .frame(width: width, height: barHeight(level))
             }
         }
         .animation(.linear(duration: 0.1), value: levels)

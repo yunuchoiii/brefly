@@ -45,7 +45,10 @@ enum PreviewRenderer {
 
         model.phase = .recording
         model.elapsed = 47
-        model.levels = [0.95, 0.8, 0.62, 0.5, 0.4, 0.33, 0.28, 0.22, 0.16, 0.12, 0.08]
+        // ⚠️ `AppModel.levelCount` 개를 다 채운다. 모자라면 바깥 막대가 데이터 없이 바닥에 깔려
+        //    실제보다 납작한 파형을 보게 된다 — 시안으로 확인이 안 된다.
+        model.levels = [0.95, 0.88, 0.72, 0.8, 0.62, 0.5, 0.58, 0.44, 0.4, 0.33, 0.36,
+                        0.28, 0.31, 0.22, 0.26, 0.18, 0.21, 0.14, 0.17, 0.11, 0.13, 0.09]
         model.partialText = samples[0].raw.prefix(150) + " 그리고 아까 말했던 단축키 안내도"
         snap("1b-recording")
         model.notice = "회의 녹음은 받아쓰기를 마친 뒤 시작할 수 있어요."
@@ -111,6 +114,10 @@ enum PreviewRenderer {
         // 회의를 지금 녹음하는 중. 시스템 소리를 못 잡는 경우도 같이 본다 —
         // 그때는 화상회의에서 내 말만 남으므로 경고가 보여야 한다.
         model.micName = "MacBook Pro 마이크"
+        // ⚠️ 회의 파형은 `levels` 가 아니라 이 둘을 본다. 안 채우면 전부 0이라 시안에서
+        //    파형이 점선으로 보이고, 높이가 맞는지 확인할 수가 없다(2026-10-01 에 그랬다).
+        model.meetingMicLevels = model.levels
+        model.meetingSystemLevels = model.levels.map { $0 * 0.6 }
         model.phase = .meetingRecording(AppModel.MeetingRecordingRun(
             startedAt: Date().addingTimeInterval(-372), capturingSystem: true, inPerson: false))
         snap("1e-meeting-recording-video")

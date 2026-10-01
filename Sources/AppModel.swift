@@ -115,10 +115,18 @@ final class AppModel: ObservableObject {
     // 녹음 중
     @Published var elapsed: TimeInterval = 0
     /// 최근 파형 레벨. [0]이 가장 새 값. 0…1.
-    @Published var levels: [Float] = Array(repeating: 0, count: 11)
+    /// 파형에 쓸 소리 크기 이력. `levels[0]` 이 **가장 최근**이고, 파형은 그것을 가운데에 놓고
+    /// 양쪽으로 펼친다. 그래서 막대 n개를 그리려면 이력이 `n/2 + 1` 개 있어야 한다.
+    ///
+    /// ⚠️ 11개로 두면 막대 21개까지만 덮는다. 2026-10-01 시안이 막대를 폭에 맞춰 30~44개
+    ///    그리게 되면서, 11번째 바깥 막대가 전부 데이터 없이 최소 높이로 깔려 **파형이 선처럼
+    ///    보였다.** 넉넉히 22개를 둔다(막대 45개까지).
+    static let levelCount = 22
+
+    @Published var levels: [Float] = Array(repeating: 0, count: AppModel.levelCount)
     /// 회의 녹음용. 받아쓰기와 따로 두는 이유는 화상일 때 두 줄(나·상대)을 함께 보여 주기 때문이다.
-    @Published var meetingMicLevels: [Float] = Array(repeating: 0, count: 11)
-    @Published var meetingSystemLevels: [Float] = Array(repeating: 0, count: 11)
+    @Published var meetingMicLevels: [Float] = Array(repeating: 0, count: AppModel.levelCount)
+    @Published var meetingSystemLevels: [Float] = Array(repeating: 0, count: AppModel.levelCount)
     @Published var partialText = ""
 
     // 완료 화면
@@ -191,7 +199,7 @@ final class AppModel: ObservableObject {
     func resetRecording() {
         elapsed = 0
         partialText = ""
-        levels = Array(repeating: 0, count: 11)
+        levels = Array(repeating: 0, count: AppModel.levelCount)
     }
 
     func refreshPrefs() {
