@@ -475,7 +475,23 @@ enum MarkdownBlock {
                 text = String(text.dropFirst(first.count)).trimmingCharacters(in: .whitespacesAndNewlines)
             }
         }
-        return parseBlocks(text)
+        var blocks = parseBlocks(text)
+        // 제목이 '한 줄 요약' 에서 나온 뒤로, 그 섹션을 그대로 두면 같은 문장이 창에서 두 번 보인다.
+        // 제목으로 쓰인 쪽만 지운다 — 요약이 여러 줄이면 나머지는 남겨야 한다.
+        if let title, blocks.count >= 2,
+           case .heading(let head) = blocks[0], head.contains("한 줄 요약"),
+           case .paragraph(let body) = blocks[1],
+           coversSameSentence(title: title, body: body) {
+            blocks.removeFirst(2)
+        }
+        return blocks
+    }
+
+    /// 제목은 40자에서 `…` 로 잘리므로 글자가 똑같지 않다. 잘린 앞부분이 맞으면 같은 문장으로 본다.
+    private static func coversSameSentence(title: String, body: String) -> Bool {
+        let head = title.hasSuffix("…") ? String(title.dropLast()) : title
+        guard head.count >= 4 else { return false }
+        return body.replacingOccurrences(of: "**", with: "").hasPrefix(head)
     }
 
     private static func parseBlocks(_ text: String) -> [MarkdownBlock] {

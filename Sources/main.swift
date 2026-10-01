@@ -2371,7 +2371,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func finishMeetingNotes(_ notes: MeetingNotes.Result, source: URL,
                                     titleOverride: String? = nil) {
         // 직접 녹음한 것은 파일 이름이 "mic" 이라 쓸모가 없다. 폴더 이름(날짜-시각)을 쓴다.
-        let stem = titleOverride ?? source.deletingPathExtension().lastPathComponent
+        // 회의록 내용에서 제목을 뽑는다. `2026-09-30-160033` 로는 나중에 무엇이 무엇인지 모른다.
+        // ⚠️ 요약이 실패했으면(본문이 받아 적은 원문) 뽑지 않는다 — 원문 첫 문장은 제목이 못 된다.
+        let fallbackStem = titleOverride ?? source.deletingPathExtension().lastPathComponent
+        let stem = notes.summaryFailed == nil
+            ? (MeetingHistoryStore.titleFromNotes(notes.notes) ?? fallbackStem)
+            : fallbackStem
         let name = stem + " 회의록.md"
         var target = source.deletingLastPathComponent().appendingPathComponent(name)
         let body = "# " + stem + "\n\n" + notes.notes + "\n"

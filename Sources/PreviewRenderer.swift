@@ -87,7 +87,8 @@ enum PreviewRenderer {
 
         // 회의록 탭. 시작 방법 셋과 최근 목록이 보여야 한다.
         model.meetingHistory = [
-            MeetingRecord(id: "a", title: "주간 기획 회의",
+            // 제목은 회의록 `한 줄 요약` 에서 뽑아 40자에서 자른다. 목록에서 잘리는 모습을 봐야 한다.
+            MeetingRecord(id: "a", title: "출시 일정을 그대로 두고, 설치 안내는 단계를 늘리지 않는 쪽으로 정리하…",
                           date: Date().addingTimeInterval(-86400), kind: .videoCall,
                           seconds: 2112, todoCount: 3, notesPath: "/tmp/a.md", audioPath: "/tmp/a.m4a"),
             MeetingRecord(id: "b", title: "고객 인터뷰 — 3차",
@@ -155,7 +156,8 @@ enum PreviewRenderer {
             Whisper.Segment(text: s.text, start: s.start, end: s.end, speaker: i % 2 == 0 ? "상대" : "나")
         }
         let sampleDoc = MeetingDocument(
-            title: "주간 기획 회의", audio: URL(fileURLWithPath: "/Users/me/문서/회의/주간 기획 회의.m4a"),
+            // 제목은 이제 날짜가 아니라 `한 줄 요약` 첫 문장이다. 시안도 실제로 뽑아 쓴다.
+            title: MeetingHistoryStore.titleFromNotes(sampleNotes) ?? "주간 기획 회의", audio: URL(fileURLWithPath: "/Users/me/문서/회의/주간 기획 회의.m4a"),
             notesFile: URL(fileURLWithPath: "/Users/me/문서/회의/주간 기획 회의 회의록.md"),
             recordedAt: Date(), duration: 2112, notes: sampleNotes, segments: labelled,
             transcript: labelled.map { "\($0.speaker ?? ""): \($0.text)" }.joined(separator: "\n"),

@@ -153,6 +153,40 @@ enum MeetingHistoryStore {
         }
     }
 
+    /// 회의록 본문에서 제목을 뽑는다. `## 한 줄 요약` 아래 첫 문장이다.
+    ///
+    /// 모델을 한 번 더 부르지 않는다 — 요약이 이미 "회의가 무엇을 다뤘고 무엇이 정해졌는지
+    /// 한 문장"을 쓰게 돼 있다. 받아쓰기 쪽 `HistoryStore.makeTitle` 과 같은 생각이다.
+    ///
+    /// ⚠️ 못 뽑으면 nil 을 돌려준다. 부르는 쪽이 날짜-시각으로 물러선다 —
+    ///    엉뚱한 제목보다 날짜가 낫다.
+    static func titleFromNotes(_ notes: String) -> String? {
+        var inSummary = false
+        for raw in notes.split(separator: "\n", omittingEmptySubsequences: false) {
+            var line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("#") {
+                // 다른 항목으로 넘어갔으면 한 줄 요약이 비어 있던 것이다.
+                if inSummary { return nil }
+                inSummary = line.contains("한 줄 요약")
+                continue
+            }
+            guard inSummary, !line.isEmpty else { continue }
+            line = line.replacingOccurrences(of: "**", with: "")
+            if line.hasPrefix("- ") { line = String(line.dropFirst(2)) }
+            // 한 문장만 쓴다. 두 문장이면 제목이 길어 목록에서 잘린다.
+            if let dot = line.range(of: "다. ") {
+                line = String(line[..<dot.upperBound]).trimmingCharacters(in: .whitespaces)
+            }
+            // 파일 이름에 못 쓰는 글자를 미리 치운다. `rename` 도 같은 일을 한다.
+            line = line.replacingOccurrences(of: "/", with: "-")
+                .replacingOccurrences(of: ":", with: "-")
+                .trimmingCharacters(in: CharacterSet(charactersIn: " .·"))
+            guard line.count >= 4 else { return nil }
+            return line.count > 40 ? line.prefix(40).trimmingCharacters(in: .whitespaces) + "…" : line
+        }
+        return nil
+    }
+
     /// 회의록 본문에서 "할 일"이 몇 개인지 센다. 그 항목 아래 불릿만 센다 —
     /// 전체 불릿을 세면 "논의한 것"까지 들어가 숫자가 뜻을 잃는다.
     static func countTodos(in notes: String) -> Int {
