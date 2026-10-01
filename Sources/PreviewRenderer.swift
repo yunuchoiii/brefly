@@ -241,6 +241,14 @@ enum PreviewRenderer {
         // 정리 스타일이 라디오 목록이 되면서 인식 탭이 한 화면을 넘는다. 전체를 봐야 확인이 된다.
         write(render(RecognitionPane(model: settings).padding(20).frame(width: 620).background(Color.paperSoft)),
               to: dir.appendingPathComponent("2-settings-recognition-full.png"))
+        // 자세함 슬라이더의 양 끝. 손잡이가 눈금 밖으로 삐져나오지 않는지 본다.
+        settings.meetingDetail = .brief
+        write(render(RecognitionPane(model: settings).padding(20).frame(width: 620).background(Color.paperSoft)),
+              to: dir.appendingPathComponent("2-settings-detail-min.png"))
+        settings.meetingDetail = .full
+        write(render(RecognitionPane(model: settings).padding(20).frame(width: 620).background(Color.paperSoft)),
+              to: dir.appendingPathComponent("2-settings-detail-max.png"))
+        settings.meetingDetail = .normal
 
         // 설치 안내 (시안 Brefly Onboarding.dc.html 의 아트보드 이름을 그대로 쓴다)
         func wizard(_ name: String, dark: Bool = false, apple: AppleClient.Status = .available, _ setup: (OnboardingModel) -> Void) {

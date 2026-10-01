@@ -354,10 +354,15 @@ struct RecognitionPane: View {
                 // 회의록만 자세함을 고른다. 받아쓰기는 커서에 바로 들어가는 짧은 글이라
                 // 단계를 나눌 거리가 없다.
                 SettingsRow(title: "회의록 자세함", subtitle: model.meetingDetail.hint) {
-                    PopupLabel(title: model.meetingDetail.title,
-                               options: Prefs.MeetingDetail.allCases.map(\.title),
-                               selected: Prefs.MeetingDetail.allCases.firstIndex(of: model.meetingDetail)) {
-                        model.meetingDetail = Prefs.MeetingDetail.allCases[$0]
+                    HStack(spacing: 10) {
+                        DotSlider(index: Binding(
+                            get: { model.meetingDetail.rawValue - 1 },
+                            set: { model.meetingDetail = Prefs.MeetingDetail(rawValue: $0 + 1) ?? .normal }
+                        ), count: Prefs.MeetingDetail.allCases.count)
+                        // 점만 두면 어느 쪽이 자세한 쪽인지 알 수 없다. 고른 단계 이름을 옆에 붙인다.
+                        Text(model.meetingDetail.title)
+                            .font(.system(size: 12, weight: .medium)).foregroundColor(.ink)
+                            .frame(width: 58, alignment: .leading)
                     }
                 }
                 PolishStyleRow(model: model)
@@ -745,6 +750,49 @@ struct AdvancedPane: View {
 }
 
 // MARK: - 조각
+
+/// 눈금이 박힌 슬라이더. 단계가 몇 개뿐이고 각 칸에 이름이 있을 때 쓴다 —
+/// 드롭다운과 달리 **어느 쪽이 더 센 쪽인지**가 한눈에 보인다.
+///
+/// 눈금을 눌러도 되고 끌어도 된다. 끝에서 더 끌어도 범위를 벗어나지 않는다.
+struct DotSlider: View {
+    @Binding var index: Int
+    let count: Int
+    var width: CGFloat = 108
+
+    private let knob: CGFloat = 14
+    private let tick: CGFloat = 6
+    private var step: CGFloat { (width - knob) / CGFloat(max(count - 1, 1)) }
+    private func center(_ i: Int) -> CGFloat { knob / 2 + step * CGFloat(i) }
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            Capsule().fill(Color.lineStrong).frame(width: width, height: 2)
+            Capsule().fill(Color.coral).frame(width: center(index), height: 2)
+            ForEach(0..<count, id: \.self) { i in
+                Circle()
+                    .fill(i <= index ? Color.coral : Color.lineStrong)
+                    .frame(width: tick, height: tick)
+                    .offset(x: center(i) - tick / 2)
+            }
+            Circle()
+                .fill(Color.coral)
+                .frame(width: knob, height: knob)
+                .overlay(Circle().stroke(Color.paper, lineWidth: 2.5))
+                .offset(x: center(index) - knob / 2)
+        }
+        .frame(width: width, height: knob)
+        .contentShape(Rectangle())
+        .animation(.easeOut(duration: 0.12), value: index)
+        .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+            let raw = ((value.location.x - knob / 2) / step).rounded()
+            let next = min(max(Int(raw), 0), count - 1)
+            if next != index { index = next }
+        })
+        .accessibilityElement()
+        .accessibilityValue("\(index + 1) / \(count)")
+    }
+}
 
 struct SettingsSection<Content: View>: View {
     let title: String?
