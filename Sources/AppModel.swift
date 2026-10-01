@@ -148,6 +148,8 @@ final class AppModel: ObservableObject {
         /// 받아쓰기 기록 오른쪽 클릭 → 이름 바꾸기 / 지우기.
         var renameSummary: (SummaryRecord) -> Void = { _ in }
         var removeSummary: (SummaryRecord) -> Void = { _ in }
+        /// 녹음 중 팝오버의 하이라이트 버튼. 단축키와 같은 일을 한다.
+        var toggleHighlight: () -> Void = {}
         var cancelMeetingNotes: () -> Void = {}
         /// 지금부터 회의를 녹음한다. 대면은 마이크만, 화상은 스피커 소리까지 잡는다.
         var startMeetingInPerson: () -> Void = {}

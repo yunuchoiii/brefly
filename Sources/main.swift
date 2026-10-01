@@ -1287,6 +1287,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         MeetingWindow.shared.onRenamed = { [weak self] in
             self?.model.meetingHistory = MeetingHistoryStore.load()
         }
+        model.actions.toggleHighlight = { [weak self] in self?.toggleHighlight() }
         model.actions.renameMeeting = { [weak self] record in
             guard let self else { return }
             guard let name = self.askName(title: "회의록 이름 바꾸기",
@@ -2079,14 +2080,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// 녹음 중 "여기 중요하다"를 켜고 끈다. 녹음 중이 아니면 알려만 준다.
     @objc private func toggleHighlight() {
         guard let recorder = meetingRecorder else {
-            setState(state, message: "회의를 녹음하는 중에만 표시할 수 있습니다.")
+            setState(state, message: "회의를 녹음하는 중에만 하이라이트할 수 있습니다.")
             return
         }
         let on = recorder.toggleHighlight()
         model.highlightOn = on
         model.highlightCount = recorder.highlights.count
-        setState(state, message: on ? "중요 표시 시작 — 다시 누르면 끝납니다."
-                                    : "중요 표시 \(recorder.highlights.count)개")
+        setState(state, message: on ? "하이라이트 시작 — 다시 누르면 끝납니다."
+                                    : "하이라이트 \(recorder.highlights.count)곳")
     }
 
     @objc private func stopMeetingRecording() {
@@ -2114,9 +2115,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let system = recorder.systemBuffers > 0 ? session.system : nil
             if wasOpen {
                 let alert = NSAlert()
-                alert.messageText = "중요 표시를 끄지 않으셨습니다"
-                alert.informativeText = "마지막 표시를 녹음이 끝난 지점까지로 두었습니다.\n"
-                    + "표시한 대목은 \(recorder.highlights.count)개입니다."
+                alert.messageText = "하이라이트를 끄지 않으셨습니다"
+                alert.informativeText = "마지막 하이라이트를 녹음이 끝난 지점까지로 두었습니다.\n"
+                    + "표시한 대목은 \(recorder.highlights.count)곳입니다."
                 alert.addButton(withTitle: "알겠습니다")
                 NSApp.activate(ignoringOtherApps: true)
                 alert.runModal()

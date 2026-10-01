@@ -905,22 +905,36 @@ struct MeetingRecordingView: View {
     @ViewBuilder
     private var highlightLine: some View {
         let key = Prefs.extraHotKey(.highlight)
-        HStack(spacing: 6) {
-            Image(systemName: model.highlightOn ? "bookmark.fill" : "bookmark")
-                .font(.system(size: 10))
-                .foregroundColor(model.highlightOn ? .coral : .darkMuted)
+        // ⚠️ 단축키만 두면 단축키를 안 정한 사람은 이 기능을 아예 못 쓴다. 누를 수 있는
+        //    버튼을 함께 둔다 — 팝오버가 열려 있는 동안엔 이게 더 빠르기도 하다.
+        return HStack(spacing: 8) {
+            Button(action: model.actions.toggleHighlight) {
+                HStack(spacing: 5) {
+                    Image(systemName: model.highlightOn ? "bookmark.fill" : "bookmark")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text(model.highlightOn ? "하이라이트 끝내기" : "하이라이트")
+                        .font(.system(size: 11, weight: .semibold))
+                    if let key, !model.highlightOn { KeyCap(key.title, accent: true) }
+                }
+                .foregroundColor(model.highlightOn ? .onPrimary : .darkText)
+                .padding(.horizontal, 10).frame(height: 26)
+                .background(model.highlightOn ? Color.coral : Color.clear)
+                .overlay(RoundedRectangle(cornerRadius: 8)
+                    .stroke(model.highlightOn ? Color.clear : Color.darkLine, lineWidth: 1))
+                .cornerRadius(8)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("녹음 중 중요한 대목을 표시합니다")
+
+            // 지금 어떤 상태인지. 켜져 있는 줄 모르면 끄지도 못한다.
             Group {
                 if model.highlightOn {
-                    Text("중요한 대목 표시 중 — 다시 누르면 끝납니다")
-                        .font(.system(size: 11, weight: .semibold)).foregroundColor(.coral)
+                    Text("표시하는 중…").font(.system(size: 11, weight: .semibold)).foregroundColor(.coral)
                 } else if model.highlightCount > 0 {
-                    Text("표시한 대목 \(model.highlightCount)곳" + (key.map { " · \($0.title)" } ?? ""))
-                        .font(.system(size: 11)).foregroundColor(.darkMuted)
-                } else if let key {
-                    Text("중요한 대목은 \(key.title) 로 표시하세요")
-                        .font(.system(size: 11)).foregroundColor(.darkMuted)
-                } else {
-                    Text("설정 > 단축키에서 '중요한 대목 표시'를 켤 수 있습니다")
+                    Text("\(model.highlightCount)곳 표시함").font(.system(size: 11)).foregroundColor(.darkMuted)
+                } else if key == nil {
+                    Text("설정 > 단축키에서 단축키도 정할 수 있습니다")
                         .font(.system(size: 11)).foregroundColor(.darkMuted)
                 }
             }

@@ -19,7 +19,7 @@ struct MeetingDocument {
     var summaryFailed: String? = nil
     /// 어느 AI 가 뽑았는지. AUTO 는 회사를 오가므로 결과만 보고는 알 수 없다.
     var usedModel: (label: String, name: String)? = nil
-    /// 녹음 중에 사용자가 찍은 중요 대목 수.
+    /// 녹음 중에 사용자가 찍은 하이라이트 수.
     var highlightCount: Int = 0
 
     var dateText: String {
@@ -350,7 +350,7 @@ struct MeetingResultView: View {
                         infoRow("AI", used.label)
                         infoRow("모델", used.name)
                         if document.highlightCount > 0 {
-                            infoRow("중요 표시", "\(document.highlightCount)곳")
+                            infoRow("하이라이트", "\(document.highlightCount)곳")
                         }
                     }
                 }
