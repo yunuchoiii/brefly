@@ -243,11 +243,18 @@ enum PreviewRenderer {
         full("trouble", TroublePane(model: settings))
         full("updates", UpdatesPane(model: settings))
         // 요약 정도 슬라이더의 양 끝. 손잡이가 눈금 밖으로 삐져나오지 않는지 본다.
+        //
+        // ⚠️ `SettingsModel` 의 didSet 이 **사용자의 진짜 설정을 덮어쓴다.** 시안을 뽑는 것만으로
+        //    설정이 바뀌면 안 되므로 원래 값을 들고 있다가 되돌린다. 되돌린 뒤 `synchronize()`
+        //    까지 불러야 한다 — 프로세스가 곧바로 끝나면 마지막 쓰기가 디스크에 안 닿는다.
+        //    2026-10-02 에 실제로 사용자의 '회의록 요약 정도'가 시안을 찍을 때마다 바뀌었다.
+        let savedDetail = Prefs.meetingDetail
         settings.meetingDetail = .brief
         full("detail-min", MeetingPane(model: settings))
         settings.meetingDetail = .full
         full("detail-max", MeetingPane(model: settings))
-        settings.meetingDetail = .normal
+        settings.meetingDetail = savedDetail
+        UserDefaults.standard.synchronize()
 
         // 설치 안내 (시안 Brefly Onboarding.dc.html 의 아트보드 이름을 그대로 쓴다)
         func wizard(_ name: String, dark: Bool = false, apple: AppleClient.Status = .available, _ setup: (OnboardingModel) -> Void) {

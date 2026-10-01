@@ -263,22 +263,14 @@ struct DictationPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            SettingsSection("단축키") {
-                SettingsRow(title: "받아쓰기 시작 / 종료",
-                            subtitle: "칸을 클릭하고 원하는 조합을 누릅니다. ⌃⌥D 처럼 수정자+키, 또는 fn⌃ 처럼 수정자 키만 눌렀다 떼도 됩니다.",
-                            warning: model.hotKeyNeedsAccessibility ? "수정자 키만 쓰는 단축키는 손쉬운 사용 권한이 필요합니다 — 허용하기" : nil,
-                            warningAction: model.actions.openAccessibility,
-                            last: true) {
-                    HotKeyRecorderField(model: model)
-                }
-            }
-            // ⚠️ 프리셋은 **받아쓰기 단축키**의 것이다. 회의록 아래에 두었더니 회의 단축키에도
-            //    걸리는 것처럼 읽혔다. 바로 밑에 붙여 둔다.
-            SettingsSection("자주 쓰는 조합") {
+            // ⚠️ 프리셋과 '직접 정하기'는 **한 설정**이다(`hotKeyIndex` 와 `customHotKey` 가
+            //    서로를 지운다). 전에는 '직접 설정' 카드와 '자주 쓰는 조합' 카드로 갈라 놓아서
+            //    두 기능처럼 보였다. 다섯 중 하나를 고르는 한 칸으로 묶는다.
+            SettingsSection("받아쓰기 시작 / 종료 단축키") {
                 ForEach(Array(HotKeyPreset.all.enumerated()), id: \.offset) { i, p in
                     let on = model.customHotKey == nil && model.hotKeyIndex == i
                     Button(action: { model.hotKeyIndex = i; model.customHotKey = nil }) {
-                        HStack {
+                        HStack(spacing: 10) {
                             Image(systemName: on ? "checkmark.circle.fill" : "circle")
                                 .foregroundColor(on ? .ink : .text4)
                             KeyCapLarge(p.title)
@@ -288,8 +280,34 @@ struct DictationPane: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    if i < HotKeyPreset.all.count - 1 { HairLine().padding(.leading, 14) }
+                    HairLine().padding(.leading, 14)
                 }
+                // 마지막 칸이 다섯 번째 선택지다. 프리셋과 같은 줄 꼴로 둬야 "이것도 그중 하나"로 읽힌다.
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 10) {
+                        Image(systemName: model.customHotKey != nil ? "checkmark.circle.fill" : "circle")
+                            .foregroundColor(model.customHotKey != nil ? .ink : .text4)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("직접 정하기")
+                                .font(.system(size: 13, weight: .semibold)).foregroundColor(.ink)
+                            Text("칸을 클릭하고 원하는 조합을 누릅니다. ⌃⌥D 처럼 수정자+키, 또는 fn⌃ 처럼 수정자 키만 눌렀다 떼도 됩니다.")
+                                .font(.system(size: 11)).foregroundColor(.text3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 10)
+                        HotKeyRecorderField(model: model)
+                    }
+                    if model.hotKeyNeedsAccessibility {
+                        Button(action: model.actions.openAccessibility) {
+                            Text("수정자 키만 쓰는 단축키는 손쉬운 사용 권한이 필요합니다 — 허용하기")
+                                .font(.system(size: 11)).foregroundColor(.coral)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.leading, 26)
+                    }
+                }
+                .padding(.horizontal, 14).padding(.vertical, 11)
             }
 
             SettingsSection("정리") {
@@ -817,8 +835,15 @@ struct DotSlider: View {
 
     var body: some View {
         ZStack(alignment: .leading) {
-            Capsule().fill(Color.lineStrong).frame(width: width, height: 2)
-            Capsule().fill(Color.coral).frame(width: center(index), height: 2)
+            // ⚠️ 선은 **첫 점에서 끝 점까지**만 깐다. `width` 전체에 깔면 손잡이 반지름만큼
+            //    (7pt) 양쪽에 점 없는 선이 삐져나온다 — 눈금이 다섯인데 선은 그보다 길어서
+            //    "왜 끝에 선만 있지?" 로 보인다(2026-10-02).
+            Capsule().fill(Color.lineStrong)
+                .frame(width: center(count - 1) - center(0), height: 2)
+                .offset(x: center(0))
+            Capsule().fill(Color.coral)
+                .frame(width: center(index) - center(0), height: 2)
+                .offset(x: center(0))
             // ⚠️ 손잡이를 **점보다 먼저** 그리고 속을 비운다. 꽉 찬 손잡이를 점 위에 얹으면
             //    고른 자리의 점이 가려져 양 끝에서 점이 네 개로 보인다. 고리로 두면 다섯 개가
             //    늘 보이고, 고른 자리는 "점에 테두리가 둘린 것"으로 읽힌다.
