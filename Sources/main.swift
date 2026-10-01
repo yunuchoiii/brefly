@@ -15,6 +15,12 @@ if let i = CommandLine.arguments.firstIndex(of: "--render-previews"), i + 1 < Co
 }
 
 // 진단용: 업데이트 확인만 돌려 본다. 버전을 주면 그 버전이 설치된 것처럼 비교한다.
+// 진단 정보에 말한 내용이 섞이지 않았는지 눈으로 본다. 보내기 전에 확인할 길이 있어야 한다.
+if CommandLine.arguments.contains("--diagnostics") {
+    print(Feedback.diagnostics())
+    exit(0)
+}
+
 if let i = CommandLine.arguments.firstIndex(of: "--check-update") {
     let fake = i + 1 < CommandLine.arguments.count ? CommandLine.arguments[i + 1] : UpdateChecker.currentVersion
     // 콜백이 메인 큐로 오므로 세마포어로 막으면 교착된다. 런루프를 돌리며 기다린다.
@@ -1295,6 +1301,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         settings.model.actions.listGeminiModels = { [weak self] in self?.listGeminiModels() }
         settings.model.actions.openLog = { [weak self] in self?.openLog() }
         settings.model.actions.showDiagnostics = { [weak self] in self?.showDiagnostics() }
+        settings.model.actions.reportProblem = { [weak self] in self?.reportProblem() }
+        settings.model.actions.clearLog = { [weak self] in self?.clearLog() }
         settings.model.actions.openDictationSettings = { [weak self] in self?.openDictationSettings() }
         settings.model.actions.openAccessibility = { [weak self] in self?.openAccessibility() }
         settings.model.actions.reopenOnboarding = { [weak self] in self?.onboarding.show() }
@@ -2634,6 +2642,81 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(info, forType: .string)
         }
+    }
+
+    /// 개발자에게 문제를 알린다.
+    ///
+    /// ⚠️ **앱이 아무것도 보내지 않는다.** 메일 앱을 열어 주고 보내기는 사용자가 누른다.
+    ///    회의 내용을 다루는 앱이라, 무엇이 나가는지 본인이 보고 지울 수 있어야 한다.
+    @objc private func reportProblem() {
+        let alert = NSAlert()
+        alert.messageText = "문제 알리기"
+        alert.informativeText = "무슨 일이 있었는지 적어 주세요. 버전·권한·설정 같은 진단 정보가 함께 붙습니다.\n"
+            + "진단 정보에는 말한 내용이 들어가지 않습니다."
+
+        let note = NSTextView(frame: NSRect(x: 0, y: 0, width: 420, height: 92))
+        note.font = .systemFont(ofSize: 12)
+        note.isRichText = false
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 34, width: 420, height: 92))
+        scroll.documentView = note
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+
+        // ⚠️ 기본은 꺼 둔다. 로그에는 받아쓴 말과 회의 제목이 그대로 들어 있다.
+        let attach = NSButton(checkboxWithTitle: "최근 로그 150줄도 함께 보내기", target: nil, action: nil)
+        attach.frame = NSRect(x: 0, y: 12, width: 420, height: 18)
+        attach.state = .off
+        let warn = NSTextField(labelWithString: "받아쓴 말과 회의 제목이 들어 있습니다. 보내기 전에 메일에서 확인하세요.")
+        warn.frame = NSRect(x: 18, y: -4, width: 402, height: 16)
+        warn.font = .systemFont(ofSize: 10)
+        warn.textColor = .secondaryLabelColor
+
+        let box = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 126))
+        box.addSubview(scroll); box.addSubview(attach); box.addSubview(warn)
+        alert.accessoryView = box
+        alert.addButton(withTitle: "메일 열기")
+        alert.addButton(withTitle: "취소")
+
+        keepPopoverOpen = true
+        applyPopoverStickiness(for: model.phase)
+        NSApp.activate(ignoringOtherApps: true)
+        alert.window.initialFirstResponder = note
+        let answer = alert.runModal()
+        keepPopoverOpen = false
+        applyPopoverStickiness(for: model.phase)
+        guard answer == .alertFirstButtonReturn else { return }
+
+        let said = note.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        var body = (said.isEmpty ? "(무슨 일이 있었는지 적어 주세요)" : said)
+            + "\n\n" + Feedback.diagnostics()
+        if attach.state == .on {
+            body += "\n\n[최근 로그 150줄]\n" + Feedback.logTail()
+        }
+        let viaClipboard = Feedback.compose(summary: said, body: body)
+        Log.write("문제 알리기 — 메일 열기 (로그 첨부 \(attach.state == .on), 클립보드 경유 \(viaClipboard))")
+        if viaClipboard {
+            setState(state, message: "메일을 열었습니다. 본문에 붙여넣기(⌘V) 해 주세요.")
+            showNotice("메일 본문에 붙여넣기(⌘V) 해 주세요. 보내기 전에 확인하실 수 있습니다.", seconds: 8)
+        } else {
+            setState(state, message: "메일을 열었습니다. 보내기 전에 내용을 확인해 주세요.")
+        }
+    }
+
+    /// 로그를 비운다. 받아쓴 말이 쌓이는 곳이라 치울 길이 있어야 한다.
+    @objc private func clearLog() {
+        let alert = NSAlert()
+        alert.messageText = "로그를 지울까요?"
+        let bytes = (try? FileManager.default.attributesOfItem(atPath: Log.url.path)[.size] as? Int) ?? nil
+        let size = bytes.map { ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) } ?? "?"
+        alert.informativeText = "지금까지 쌓인 기록(\(size))을 비웁니다. 되돌릴 수 없습니다. "
+            + "앱 설정과 받아쓰기 기록은 그대로입니다."
+        alert.addButton(withTitle: "지우기")
+        alert.addButton(withTitle: "취소")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        try? "".write(to: Log.url, atomically: true, encoding: .utf8)
+        Log.write("=== 로그를 지웠습니다 ===")
+        setState(state, message: "로그를 비웠습니다.")
     }
 
     /// macOS 받아쓰기가 꺼져 있으면 어떤 인식 방식도 동작하지 않는다.

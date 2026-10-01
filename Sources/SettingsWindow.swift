@@ -95,6 +95,10 @@ final class SettingsModel: ObservableObject {
         var listGeminiModels: () -> Void = {}
         var openLog: () -> Void = {}
         var showDiagnostics: () -> Void = {}
+        /// 개발자에게 문제를 알린다. 메일 앱을 열어 줄 뿐 보내기는 사용자가 누른다.
+        var reportProblem: () -> Void = {}
+        /// 로그 파일을 비운다. 받아쓴 말이 쌓여 있어서 치울 수 있어야 한다.
+        var clearLog: () -> Void = {}
         var openDictationSettings: () -> Void = {}
         var openAccessibility: () -> Void = {}
         var reopenOnboarding: () -> Void = {}
@@ -760,10 +764,19 @@ struct TroublePane: View {
                           action: model.actions.testBackend, last: true)
             }
 
+            SettingsSection("개발자에게 알리기") {
+                ActionRow("문제 알리기",
+                          "무슨 일이 있었는지 적으면 메일 앱이 열립니다. 보내기 전에 내용을 보고 고칠 수 있습니다.",
+                          buttonTitle: "쓰기", action: model.actions.reportProblem, last: true)
+            }
+
             SettingsSection("그 밖에") {
                 ActionRow("처음 설정 안내 다시 보기", "권한·AI 모델·단축키를 처음처럼 한 단계씩 다시 설정합니다.",
                           action: model.actions.reopenOnboarding)
-                ActionRow("로그 열기", Log.url.path, action: model.actions.openLog, last: true)
+                ActionRow("로그 열기", Log.url.path, action: model.actions.openLog)
+                // 로그에는 받아쓴 말이 그대로 남는다(`main.swift` 의 "받아쓰기 원문"). 치울 길을 둔다.
+                ActionRow("로그 지우기", "로그에는 받아쓴 말이 들어 있습니다. 비우면 되돌릴 수 없습니다.",
+                          buttonTitle: "지우기", action: model.actions.clearLog, last: true)
             }
         }
     }
