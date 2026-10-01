@@ -1153,9 +1153,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func showPopover() {
         guard let button = statusItem.button, !popover.isShown else { return }
         // 오래된 결과는 치운다. 기록에서 꺼내 본 것(`resultShownAt` 이 비어 있음)은 그대로 둔다.
-        // ⚠️ 회의를 녹음하는 중이면 **무조건** 그 화면으로 돌아간다. 받아쓰기 결과가 덮고 있으면
+        // ⚠️ 회의를 녹음하는 중이면 그 화면으로 돌아간다. 받아쓰기 결과가 덮고 있으면
         //    끝내는 버튼이 없어 녹음을 멈출 수가 없다.
-        if meetingRecorder != nil, let run = meetingRecordingRun {
+        // ⚠️ 단, 받아쓰기가 **지금 돌고 있으면 건드리지 않는다.** 2026-10-01 에 여기서
+        //    조건 없이 덮었더니, 회의 중 받아쓰기를 하는 24초 동안 파형도 글자도 안 보이고
+        //    회의 화면만 떠서 받아쓰기가 되고 있는지 알 수가 없었다.
+        let dictating = recorder.isRunning || state == .polishing
+        if !dictating, meetingRecorder != nil, let run = meetingRecordingRun {
             if case .meetingRecording = model.phase {} else {
                 model.phase = .meetingRecording(run)
                 model.resultShownAt = nil
@@ -1504,6 +1508,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         title.append(NSAttributedString(
             string: " \(Format.timer(model.elapsed))",
             attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)]))
+        // ⚠️ 회의를 녹음하는 중이면 회의 시계도 같이 적는다. 이 타이머가 0.25초마다 메뉴바를
+        //    직접 덮어쓰기 때문에, 받아쓰기 시계만 남기면 **회의 시계가 0부터 다시 시작한 것처럼
+        //    보인다**(2026-10-01 실측: 메뉴바 0:15, 팝오버 1:05 — 같은 회의인데 50초 차이).
+        if let started = meetingRecordingStartedAt {
+            let seconds = Int(Date().timeIntervalSince(started))
+            title.append(NSAttributedString(
+                string: String(format: " · 회의 %d:%02d", seconds / 60, seconds % 60),
+                attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)]))
+        }
         button.attributedTitle = title
     }
 
