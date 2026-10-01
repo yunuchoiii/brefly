@@ -210,7 +210,8 @@ enum Prefs {
 
         var shortTitle: String {
             switch self {
-            case .auto:   return "AUTO"
+            // 화면에 그대로 뜨는 말이다. 영문 약어는 비개발자가 읽는 화면에 두지 않는다.
+            case .auto:   return "자동으로 선택"
             case .gemini: return "Gemini"
             case .apple:  return "Apple AI (이 맥)"
             case .api:    return "Claude"

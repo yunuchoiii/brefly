@@ -229,25 +229,24 @@ enum PreviewRenderer {
         write(render(SettingsView(model: settings), dark: true), to: dir.appendingPathComponent("dark-2-settings-general.png"))
 
         settings.showOnboarding = false
-        write(render(PersonalPane(model: settings).padding(20).frame(width: 620).background(Color.paperSoft)),
-              to: dir.appendingPathComponent("2-settings-personal-full.png"))
-        write(render(GeneralPane(model: settings).padding(20).frame(width: 620).background(Color.paperSoft)),
-              to: dir.appendingPathComponent("2-settings-general-full.png"))
-        write(render(AdvancedPane(model: settings).padding(20).frame(width: 620).background(Color.paperSoft)),
-              to: dir.appendingPathComponent("2-settings-advanced-full.png"))
-        // 단축키 탭도 회의록 묶음이 붙어 한 화면을 넘는다.
-        write(render(HotKeyPane(model: settings).padding(20).frame(width: 620).background(Color.paperSoft)),
-              to: dir.appendingPathComponent("2-settings-hotkey-full.png"))
-        // 정리 스타일이 라디오 목록이 되면서 인식 탭이 한 화면을 넘는다. 전체를 봐야 확인이 된다.
-        write(render(RecognitionPane(model: settings).padding(20).frame(width: 620).background(Color.paperSoft)),
-              to: dir.appendingPathComponent("2-settings-recognition-full.png"))
-        // 자세함 슬라이더의 양 끝. 손잡이가 눈금 밖으로 삐져나오지 않는지 본다.
+        // 탭마다 한 화면을 넘는 것이 있다. 잘린 아래쪽까지 봐야 확인이 된다.
+        // ⚠️ 여섯 탭 **전부** 찍는다. 2026-10-02 에 탭을 다시 묶었는데, 한두 개만 찍어 두면
+        //    옮긴 항목이 엉뚱한 탭에 떨어져도 모른다.
+        func full(_ name: String, _ view: some View) {
+            write(render(view.padding(20).frame(width: 620).background(Color.paperSoft)),
+                  to: dir.appendingPathComponent("2-settings-\(name)-full.png"))
+        }
+        full("general", GeneralPane(model: settings))
+        full("dictation", DictationPane(model: settings))
+        full("meeting", MeetingPane(model: settings))
+        full("ai", AIPane(model: settings))
+        full("trouble", TroublePane(model: settings))
+        full("updates", UpdatesPane(model: settings))
+        // 요약 정도 슬라이더의 양 끝. 손잡이가 눈금 밖으로 삐져나오지 않는지 본다.
         settings.meetingDetail = .brief
-        write(render(RecognitionPane(model: settings).padding(20).frame(width: 620).background(Color.paperSoft)),
-              to: dir.appendingPathComponent("2-settings-detail-min.png"))
+        full("detail-min", MeetingPane(model: settings))
         settings.meetingDetail = .full
-        write(render(RecognitionPane(model: settings).padding(20).frame(width: 620).background(Color.paperSoft)),
-              to: dir.appendingPathComponent("2-settings-detail-max.png"))
+        full("detail-max", MeetingPane(model: settings))
         settings.meetingDetail = .normal
 
         // 설치 안내 (시안 Brefly Onboarding.dc.html 의 아트보드 이름을 그대로 쓴다)
