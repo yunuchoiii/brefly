@@ -45,9 +45,15 @@ enum PreviewRenderer {
 
         model.phase = .recording
         model.elapsed = 47
-        model.levels = [0.95, 0.8, 0.62, 0.5, 0.4, 0.33, 0.28, 0.22, 0.16, 0.12, 0.08]
+        // ⚠️ `AppModel.levelCount` 개를 다 채운다. 모자라면 바깥 막대가 데이터 없이 바닥에 깔려
+        //    실제보다 납작한 파형을 보게 된다 — 시안으로 확인이 안 된다.
+        model.levels = [0.95, 0.88, 0.72, 0.8, 0.62, 0.5, 0.58, 0.44, 0.4, 0.33, 0.36,
+                        0.28, 0.31, 0.22, 0.26, 0.18, 0.21, 0.14, 0.17, 0.11, 0.13, 0.09]
         model.partialText = samples[0].raw.prefix(150) + " 그리고 아까 말했던 단축키 안내도"
         snap("1b-recording")
+        model.notice = "회의 녹음은 받아쓰기를 마친 뒤 시작할 수 있어요."
+        snap("1b-recording-blocked")
+        model.notice = nil
 
         model.phase = .done(samples[0], .copied)
         model.rawExpanded = false
@@ -87,7 +93,8 @@ enum PreviewRenderer {
 
         // 회의록 탭. 시작 방법 셋과 최근 목록이 보여야 한다.
         model.meetingHistory = [
-            MeetingRecord(id: "a", title: "주간 기획 회의",
+            // 제목은 회의록 `한 줄 요약` 에서 뽑아 40자에서 자른다. 목록에서 잘리는 모습을 봐야 한다.
+            MeetingRecord(id: "a", title: "출시 일정 확정과 설치 안내 정리",
                           date: Date().addingTimeInterval(-86400), kind: .videoCall,
                           seconds: 2112, todoCount: 3, notesPath: "/tmp/a.md", audioPath: "/tmp/a.m4a"),
             MeetingRecord(id: "b", title: "고객 인터뷰 — 3차",
@@ -106,12 +113,35 @@ enum PreviewRenderer {
 
         // 회의를 지금 녹음하는 중. 시스템 소리를 못 잡는 경우도 같이 본다 —
         // 그때는 화상회의에서 내 말만 남으므로 경고가 보여야 한다.
+        model.micName = "MacBook Pro 마이크"
+        // ⚠️ 회의 파형은 `levels` 가 아니라 이 둘을 본다. 안 채우면 전부 0이라 시안에서
+        //    파형이 점선으로 보이고, 높이가 맞는지 확인할 수가 없다(2026-10-01 에 그랬다).
+        model.meetingMicLevels = model.levels
+        model.meetingSystemLevels = model.levels.map { $0 * 0.6 }
         model.phase = .meetingRecording(AppModel.MeetingRecordingRun(
             startedAt: Date().addingTimeInterval(-372), capturingSystem: true, inPerson: false))
         snap("1e-meeting-recording-video")
+        // 화면 기록 권한이 없어 상대 목소리를 못 잡는 모습. 모르고 회의를 다 녹음하면 되돌릴 수 없다.
+        model.phase = .meetingRecording(AppModel.MeetingRecordingRun(
+            startedAt: Date().addingTimeInterval(-372), capturingSystem: false, inPerson: false))
+        snap("1e-meeting-recording-no-system")
         model.phase = .meetingRecording(AppModel.MeetingRecordingRun(
             startedAt: Date().addingTimeInterval(-372), capturingSystem: false, inPerson: true))
         snap("1e-meeting-recording-in-person")
+        // 회의 중 받아쓰기 단축키를 눌렀을 때. 막았다는 것이 **화면에** 보여야 한다 —
+        // 메뉴바 글자만으로는 눌러도 아무 일 없는 것으로 읽힌다.
+        model.notice = "회의를 녹음하는 동안에는 받아쓰기를 쓸 수 없어요."
+        snap("1e-meeting-recording-blocked")
+        model.notice = nil
+        // 하이라이트 두 곳을 남긴 모습과, 지금 켜 둔 모습. 시안 2a 의 나머지 두 상태다.
+        model.highlightCount = 2
+        snap("1e-meeting-recording-marks")
+        model.highlightOn = true
+        model.highlightStartedAt = Date().addingTimeInterval(-7)
+        snap("1e-meeting-recording-highlighting")
+        model.highlightOn = false
+        model.highlightStartedAt = nil
+        model.highlightCount = 0
 
         model.retryRecord = samples[0]
         model.phase = .error("정리에 실패해서 원문을 그대로 복사했어요\n\n"
@@ -130,6 +160,9 @@ enum PreviewRenderer {
 
         // 회의록 결과 창. 팝오버가 아니라 일반 창이라 크기를 못 박아 그린다.
         let sampleNotes = """
+        ## 제목
+        출시 일정 확정과 설치 안내 정리
+
         ## 한 줄 요약
         출시 일정을 그대로 두고, 설치 안내는 단계를 늘리지 않는 쪽으로 정리하기로 했다.
 
@@ -155,11 +188,16 @@ enum PreviewRenderer {
             Whisper.Segment(text: s.text, start: s.start, end: s.end, speaker: i % 2 == 0 ? "상대" : "나")
         }
         let sampleDoc = MeetingDocument(
-            title: "주간 기획 회의", audio: URL(fileURLWithPath: "/Users/me/문서/회의/주간 기획 회의.m4a"),
+            // 제목은 이제 날짜가 아니라 `한 줄 요약` 첫 문장이다. 시안도 실제로 뽑아 쓴다.
+            title: MeetingHistoryStore.titleFromNotes(sampleNotes) ?? "주간 기획 회의", audio: URL(fileURLWithPath: "/Users/me/문서/회의/주간 기획 회의.m4a"),
             notesFile: URL(fileURLWithPath: "/Users/me/문서/회의/주간 기획 회의 회의록.md"),
-            recordedAt: Date(), duration: 2112, notes: sampleNotes, segments: labelled,
+            // 앱은 `## 제목` 을 떼고 저장한다(제목은 창 머리에 있다). 시안도 같아야 한다.
+            recordedAt: Date(), duration: 2112,
+            notes: MeetingHistoryStore.stripTitleSection(sampleNotes), segments: labelled,
             transcript: labelled.map { "\($0.speaker ?? ""): \($0.text)" }.joined(separator: "\n"),
-            speakersKnown: true)
+            speakersKnown: true,
+            usedModel: ("ChatGPT", "gpt-5.5"),
+            highlightCount: 3)
         // 요약만 실패한 모습. 이 화면이 없으면 사용자는 다 잃은 줄 안다.
         var failedDoc = sampleDoc
         failedDoc.summaryFailed = "요약에 실패했습니다 (503). This model is currently experiencing high demand."
@@ -191,15 +229,34 @@ enum PreviewRenderer {
         write(render(SettingsView(model: settings), dark: true), to: dir.appendingPathComponent("dark-2-settings-general.png"))
 
         settings.showOnboarding = false
-        write(render(PersonalPane(model: settings).padding(20).frame(width: 620).background(Color.paperSoft)),
-              to: dir.appendingPathComponent("2-settings-personal-full.png"))
-        write(render(GeneralPane(model: settings).padding(20).frame(width: 620).background(Color.paperSoft)),
-              to: dir.appendingPathComponent("2-settings-general-full.png"))
-        write(render(AdvancedPane(model: settings).padding(20).frame(width: 620).background(Color.paperSoft)),
-              to: dir.appendingPathComponent("2-settings-advanced-full.png"))
-        // 정리 스타일이 라디오 목록이 되면서 인식 탭이 한 화면을 넘는다. 전체를 봐야 확인이 된다.
-        write(render(RecognitionPane(model: settings).padding(20).frame(width: 620).background(Color.paperSoft)),
-              to: dir.appendingPathComponent("2-settings-recognition-full.png"))
+        // 탭마다 한 화면을 넘는 것이 있다. 잘린 아래쪽까지 봐야 확인이 된다.
+        // ⚠️ 여섯 탭 **전부** 찍는다. 2026-10-02 에 탭을 다시 묶었는데, 한두 개만 찍어 두면
+        //    옮긴 항목이 엉뚱한 탭에 떨어져도 모른다.
+        func full(_ name: String, _ view: some View) {
+            write(render(view.padding(20).frame(width: 620).background(Color.paperSoft)),
+                  to: dir.appendingPathComponent("2-settings-\(name)-full.png"))
+        }
+        full("general", GeneralPane(model: settings))
+        // '직접 추가'를 펼친 모습. 접혀 있으면 안쪽 설명을 확인할 길이 없다.
+        full("usage-expanded", UsageContextSection(model: settings, startExpanded: true))
+        full("dictation", DictationPane(model: settings))
+        full("meeting", MeetingPane(model: settings))
+        full("ai", AIPane(model: settings))
+        full("trouble", TroublePane(model: settings))
+        full("updates", UpdatesPane(model: settings))
+        // 요약 정도 슬라이더의 양 끝. 손잡이가 눈금 밖으로 삐져나오지 않는지 본다.
+        //
+        // ⚠️ `SettingsModel` 의 didSet 이 **사용자의 진짜 설정을 덮어쓴다.** 시안을 뽑는 것만으로
+        //    설정이 바뀌면 안 되므로 원래 값을 들고 있다가 되돌린다. 되돌린 뒤 `synchronize()`
+        //    까지 불러야 한다 — 프로세스가 곧바로 끝나면 마지막 쓰기가 디스크에 안 닿는다.
+        //    2026-10-02 에 실제로 사용자의 '회의록 요약 정도'가 시안을 찍을 때마다 바뀌었다.
+        let savedDetail = Prefs.meetingDetail
+        settings.meetingDetail = .brief
+        full("detail-min", MeetingPane(model: settings))
+        settings.meetingDetail = .full
+        full("detail-max", MeetingPane(model: settings))
+        settings.meetingDetail = savedDetail
+        UserDefaults.standard.synchronize()
 
         // 설치 안내 (시안 Brefly Onboarding.dc.html 의 아트보드 이름을 그대로 쓴다)
         func wizard(_ name: String, dark: Bool = false, apple: AppleClient.Status = .available, _ setup: (OnboardingModel) -> Void) {

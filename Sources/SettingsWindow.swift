@@ -16,26 +16,30 @@ extension Notification.Name {
 final class SettingsModel: ObservableObject {
 
     enum Tab: String, CaseIterable, Identifiable {
-        case general, personal, recognition, hotkey, updates, advanced
+        // ⚠️ 2026-10-02 에 다시 묶었다. 전에는 '일반'에 받아쓰기 설정이 거의 다 들어가 있고
+        //    단축키만 따로 탭이 있어서, 한 기능을 고치려면 탭 두세 개를 오가야 했다.
+        //    지금 기준은 **쓰는 사람이 하려는 일**이다 — 받아쓰기 / 회의록이 먼저고,
+        //    둘이 같이 쓰는 것(AI 연결)과 앱 자체(일반·업데이트), 안 될 때(문제 해결)가 뒤다.
+        case general, dictation, meeting, ai, trouble, updates
         var id: String { rawValue }
         var title: String {
             switch self {
-            case .general:     return "일반"
-            case .personal:    return "개인화"
-            case .recognition: return "음성인식 · AI"
-            case .hotkey:      return "단축키"
-            case .updates:     return "업데이트"
-            case .advanced:    return "고급 · 진단"
+            case .general:   return "일반"
+            case .dictation: return "받아쓰기"
+            case .meeting:   return "회의록"
+            case .ai:        return "AI 연결"
+            case .trouble:   return "문제 해결"
+            case .updates:   return "업데이트"
             }
         }
         var symbol: String {
             switch self {
-            case .general:     return "smallcircle.filled.circle"
-            case .personal:    return "person.crop.circle"
-            case .recognition: return "waveform.path"
-            case .hotkey:      return "keyboard"
-            case .updates:     return "arrow.down.circle"
-            case .advanced:    return "sparkles"
+            case .general:   return "smallcircle.filled.circle"
+            case .dictation: return "waveform"
+            case .meeting:   return "person.2.wave.2"
+            case .ai:        return "sparkles"
+            case .trouble:   return "wrench.and.screwdriver"
+            case .updates:   return "arrow.down.circle"
             }
         }
     }
@@ -65,6 +69,7 @@ final class SettingsModel: ObservableObject {
     @Published var backend = Prefs.backend                    { didSet { Prefs.backend = backend; changed() } }
     @Published var tier = Prefs.tier                          { didSet { Prefs.tier = tier; changed() } }
     @Published var meetingBackend = Prefs.meetingBackend      { didSet { Prefs.meetingBackend = meetingBackend; changed() } }
+    @Published var meetingDetail = Prefs.meetingDetail        { didSet { Prefs.meetingDetail = meetingDetail; changed() } }
     @Published var meetingTier = Prefs.meetingTier            { didSet { Prefs.meetingTier = meetingTier; changed() } }
     @Published var style = Prefs.style                        { didSet { Prefs.style = style; changed() } }
     @Published var geminiModel = Prefs.geminiModel            { didSet { Prefs.geminiModel = geminiModel; changed() } }
@@ -90,6 +95,10 @@ final class SettingsModel: ObservableObject {
         var listGeminiModels: () -> Void = {}
         var openLog: () -> Void = {}
         var showDiagnostics: () -> Void = {}
+        /// 개발자에게 문제를 알린다. 메일 앱을 열어 줄 뿐 보내기는 사용자가 누른다.
+        var reportProblem: () -> Void = {}
+        /// 로그 파일을 비운다. 받아쓴 말이 쌓여 있어서 치울 수 있어야 한다.
+        var clearLog: () -> Void = {}
         var openDictationSettings: () -> Void = {}
         var openAccessibility: () -> Void = {}
         var reopenOnboarding: () -> Void = {}
@@ -98,6 +107,9 @@ final class SettingsModel: ObservableObject {
     var actions = Actions()
 
     private func changed() { NotificationCenter.default.post(name: .breflyPrefsChanged, object: nil) }
+
+    /// 회의 단축키가 바뀌었을 때. 화면을 다시 그리고 앱에 다시 등록시킨다.
+    func bumpHotKeys() { objectWillChange.send(); changed() }
 
     func refresh() {
         accessibilityTrusted = Paster.isTrusted
@@ -171,12 +183,12 @@ struct SettingsView: View {
             ScrollView {
                 Group {
                     switch model.tab {
-                    case .general:     GeneralPane(model: model)
-                    case .personal:    PersonalPane(model: model)
-                    case .recognition: RecognitionPane(model: model)
-                    case .hotkey:      HotKeyPane(model: model)
-                    case .updates:     UpdatesPane(model: model)
-                    case .advanced:    AdvancedPane(model: model)
+                    case .general:   GeneralPane(model: model)
+                    case .dictation: DictationPane(model: model)
+                    case .meeting:   MeetingPane(model: model)
+                    case .ai:        AIPane(model: model)
+                    case .trouble:   TroublePane(model: model)
+                    case .updates:   UpdatesPane(model: model)
                     }
                 }
                 .padding(20)
@@ -215,23 +227,118 @@ struct SettingsView: View {
     }
 }
 
-// MARK: 2a 일반
+// MARK: 일반 — 앱이 어떻게 떠 있을지
 
 struct GeneralPane: View {
     @ObservedObject var model: SettingsModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            SettingsSection("받아쓰기") {
-                SettingsRow(title: "받아쓰기 시작 단축키",
-                            subtitle: "칸을 클릭하고 원하는 조합을 누릅니다. fn⌃ 처럼 수정자 키만 눌렀다 떼도 됩니다.",
-                            warning: model.hotKeyNeedsAccessibility ? "수정자 키만 쓰는 단축키는 손쉬운 사용 권한이 필요합니다 — 허용하기" : nil,
-                            warningAction: model.actions.openAccessibility) {
-                    HotKeyRecorderField(model: model)
+            // ⚠️ 여기 두는 이유: 받아쓰기와 회의록이 **둘 다 쓰는 유일한 설정**이다
+            //    (`Glossary.apply` 가 양쪽 받아쓴 글에 걸린다). 한쪽 탭에 두면 그쪽 전용으로
+            //    읽히고, 양쪽에 같은 걸 두면 서로 다른 설정인 줄 안다.
+            UsageContextSection(model: model)
+
+            SettingsSection("말하는 언어") {
+                // 받아쓰기와 회의록이 **둘 다** 이 값을 본다(회의록은 2026-10-02 부터).
+                SettingsRow(title: "인식 언어", subtitle: "받아쓰기와 회의록 모두 이 언어로 받아 적습니다.",
+                            last: true) {
+                    PopupLabel(title: Prefs.locales.first { $0.id == model.localeID }?.title ?? model.localeID,
+                               options: Prefs.locales.map(\.title),
+                               selected: Prefs.locales.firstIndex { $0.id == model.localeID }) {
+                        model.localeID = Prefs.locales[$0].id
+                    }
+                }
+            }
+
+            SettingsSection("화면") {
+                SettingsRow(title: "화면 모드", subtitle: "팝오버와 설정 창에 적용합니다.", last: true) {
+                    Segmented(options: Prefs.Appearance.allCases.map { ($0, $0.title) }, selection: $model.appearance)
+                }
+            }
+
+            SettingsSection("실행") {
+                SettingsRow(title: "로그인 시 Brefly 자동 실행",
+                            subtitle: nil,
+                            warning: model.launchAtLoginError.isEmpty ? nil : model.launchAtLoginError) {
+                    InkToggle(isOn: Binding(get: { model.launchAtLogin }, set: { model.setLaunchAtLogin($0) }))
+                }
+                SettingsRow(title: "Dock 에 Brefly 표시",
+                            subtitle: "Dock 아이콘을 누르면 메뉴바 아이콘처럼 창이 열립니다. 끄면 메뉴바에만 남습니다.") {
+                    InkToggle(isOn: $model.showInDock)
+                }
+                SettingsRow(title: "실패 시 시스템 알림 표시", subtitle: nil, last: true) {
+                    InkToggle(isOn: $model.showErrorAlerts)
+                }
+            }
+        }
+    }
+}
+
+// MARK: 받아쓰기 — 누르고 · 말하고 · 꽂히는 것
+
+/// ⚠️ 받아쓰기 설정은 **여기 한곳**에 모은다. 전에는 단축키가 '단축키' 탭에, 정리가 '음성인식·AI'
+///    탭에, 붙여넣기가 '일반' 탭에 흩어져 있어서 한 기능을 손보려면 탭 셋을 오갔다.
+struct DictationPane: View {
+    @ObservedObject var model: SettingsModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            // ⚠️ 프리셋과 '직접 정하기'는 **한 설정**이다(`hotKeyIndex` 와 `customHotKey` 가
+            //    서로를 지운다). 전에는 '직접 설정' 카드와 '자주 쓰는 조합' 카드로 갈라 놓아서
+            //    두 기능처럼 보였다. 다섯 중 하나를 고르는 한 칸으로 묶는다.
+            SettingsSection("받아쓰기 시작 / 종료 단축키") {
+                ForEach(Array(HotKeyPreset.all.enumerated()), id: \.offset) { i, p in
+                    let on = model.customHotKey == nil && model.hotKeyIndex == i
+                    Button(action: { model.hotKeyIndex = i; model.customHotKey = nil }) {
+                        HStack(spacing: 10) {
+                            Image(systemName: on ? "checkmark.circle.fill" : "circle")
+                                .foregroundColor(on ? .ink : .text4)
+                            KeyCapLarge(p.title)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 14).frame(height: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    HairLine().padding(.leading, 14)
+                }
+                // 마지막 칸이 다섯 번째 선택지다. 프리셋과 같은 줄 꼴로 둬야 "이것도 그중 하나"로 읽힌다.
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 10) {
+                        Image(systemName: model.customHotKey != nil ? "checkmark.circle.fill" : "circle")
+                            .foregroundColor(model.customHotKey != nil ? .ink : .text4)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("직접 정하기")
+                                .font(.system(size: 13, weight: .semibold)).foregroundColor(.ink)
+                            Text("칸을 클릭하고 원하는 조합을 누릅니다. ⌃⌥D 처럼 수정자+키, 또는 fn⌃ 처럼 수정자 키만 눌렀다 떼도 됩니다.")
+                                .font(.system(size: 11)).foregroundColor(.text3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 10)
+                        HotKeyRecorderField(model: model)
+                    }
+                    if model.hotKeyNeedsAccessibility {
+                        Button(action: model.actions.openAccessibility) {
+                            Text("수정자 키만 쓰는 단축키는 손쉬운 사용 권한이 필요합니다 — 허용하기")
+                                .font(.system(size: 11)).foregroundColor(.coral)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.leading, 26)
+                    }
+                }
+                .padding(.horizontal, 14).padding(.vertical, 11)
+            }
+
+            SettingsSection("정리") {
+                SettingsRow(title: "AI 로 정리하기", subtitle: "끄면 받아쓰기 원문을 그대로 붙여 넣습니다.") {
+                    InkToggle(isOn: $model.polishEnabled)
                 }
                 SettingsRow(title: "말을 멈추면 자동 요약",
                             subtitle: model.autoStop ? "\(Int(model.silenceSeconds))초간 말이 없으면 자동으로 요약합니다."
-                                                     : "끄면 단축키를 다시 누를 때만 요약합니다. 말하다 생각해도 끊기지 않습니다.") {
+                                                     : "끄면 단축키를 다시 누를 때만 요약합니다. 말하다 생각해도 끊기지 않습니다.",
+                            last: true) {
                     HStack(spacing: 8) {
                         if model.autoStop {
                             PopupLabel(title: "\(Int(model.silenceSeconds))초",
@@ -243,26 +350,25 @@ struct GeneralPane: View {
                         InkToggle(isOn: $model.autoStop)
                     }
                 }
-                SettingsRow(title: "녹음 시작·종료 알림음", subtitle: "시작할 때와 끝낼 때 짧은 소리로 알려 줍니다.") {
-                    InkToggle(isOn: $model.recordingSounds)
+            }
+            SettingsSection(nil) { PolishStyleRow(model: model) }
+
+            SettingsSection("듣기") {
+                SettingsRow(title: "음성 인식을 애플 서버에서 처리",
+                            subtitle: "기본 켬. 더 정확하지만 인터넷이 필요하고 한 번에 약 1분까지 인식합니다. 끄면 인터넷 없이 이 맥에서만 인식하지만 정확도가 떨어집니다.") {
+                    InkToggle(isOn: $model.forceServer)
                 }
                 SettingsRow(title: "녹음 중 다른 소리 줄이기",
                             subtitle: "재생 중인 음악·영상 소리를 녹음이 끝날 때까지 낮춥니다. 에어팟은 맥이 알아서 줄입니다.") {
                     InkToggle(isOn: $model.duckMedia)
                 }
-                SettingsRow(title: "인식 언어", subtitle: nil, last: true) {
-                    PopupLabel(title: Prefs.locales.first { $0.id == model.localeID }?.title ?? model.localeID,
-                               options: Prefs.locales.map(\.title),
-                               selected: Prefs.locales.firstIndex { $0.id == model.localeID }) {
-                        model.localeID = Prefs.locales[$0].id
-                    }
+                SettingsRow(title: "녹음 시작·종료 알림음",
+                            subtitle: "시작할 때와 끝낼 때 짧은 소리로 알려 줍니다.", last: true) {
+                    InkToggle(isOn: $model.recordingSounds)
                 }
             }
 
-            SettingsSection("결과 처리") {
-                SettingsRow(title: "클립보드에 자동 복사", subtitle: nil) {
-                    InkToggle(isOn: $model.copyToClipboard)
-                }
+            SettingsSection("결과") {
                 SettingsRow(title: "커서 위치에 자동 붙여넣기",
                             subtitle: model.accessibilityTrusted ? "손쉬운 사용(접근성) 권한이 있습니다." : nil,
                             warning: model.accessibilityTrusted ? nil : "손쉬운 사용(접근성) 권한이 필요합니다 — 허용하기",
@@ -274,157 +380,66 @@ struct GeneralPane: View {
                         InkToggle(isOn: $model.restoreClipboard)
                     }
                 }
+                SettingsRow(title: "클립보드에 자동 복사", subtitle: nil) {
+                    InkToggle(isOn: $model.copyToClipboard)
+                }
                 SettingsRow(title: "정리가 끝나면 결과 창 띄우기",
-                            subtitle: "끄면 메뉴바 아이콘을 눌러야 결과를 봅니다. 복사·붙여넣기는 그대로 됩니다. 녹음 중·정리 중 화면은 항상 뜹니다.") {
+                            subtitle: "끄면 메뉴바 아이콘을 눌러야 결과를 봅니다. 복사·붙여넣기는 그대로 됩니다. 녹음 중·정리 중 화면은 항상 뜹니다.",
+                            last: true) {
                     InkToggle(isOn: $model.showResultPopover)
                 }
-                SettingsRow(title: "실패 시 시스템 알림 표시", subtitle: nil, last: true) {
-                    InkToggle(isOn: $model.showErrorAlerts)
-                }
             }
 
-            SettingsSection(nil) {
-                SettingsRow(title: "로그인 시 Brefly 자동 실행",
-                            subtitle: model.launchAtLoginError.isEmpty ? nil : nil,
-                            warning: model.launchAtLoginError.isEmpty ? nil : model.launchAtLoginError) {
-                    InkToggle(isOn: Binding(get: { model.launchAtLogin }, set: { model.setLaunchAtLogin($0) }))
-                }
-                SettingsRow(title: "Dock 에 Brefly 표시",
-                            subtitle: "Dock 아이콘을 누르면 메뉴바 아이콘처럼 창이 열립니다. 끄면 메뉴바에만 남습니다.",
-                            last: true) {
-                    InkToggle(isOn: $model.showInDock)
-                }
-            }
+            Text("단축키는 어느 앱에서나 동작합니다. 다른 앱이 같은 조합을 쓰면 등록에 실패할 수 있습니다. ⌘ 단독 조합(⌘C 등)은 겹치기 쉬우니 ⌃⌥ 를 권합니다.")
+                .font(.system(size: 11)).foregroundColor(.text3)
         }
     }
 }
 
-// MARK: 개인화 — 나에 맞춘 것들
+// MARK: 회의록
 
-struct PersonalPane: View {
+struct MeetingPane: View {
     @ObservedObject var model: SettingsModel
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            UsageContextSection(model: model)
-
-            SettingsSection("화면") {
-                SettingsRow(title: "화면 모드", subtitle: "팝오버와 설정 창에 적용합니다.", last: true) {
-                    Segmented(options: Prefs.Appearance.allCases.map { ($0, $0.title) }, selection: $model.appearance)
+            SettingsSection("단축키") {
+                // 대면과 화상은 권한도 동작도 달라서 따로 고른다. 하나로 묶으면 누를 때마다
+                // 무엇이 시작될지 생각해야 한다. 안 쓸 거면 비워 두면 된다.
+                SettingsRow(title: "대면 회의 녹음 시작 / 종료",
+                            subtitle: "이 맥의 마이크로 그 자리의 말을 담습니다.") {
+                    SlotHotKeyField(slot: .inPerson, model: model)
                 }
-            }
-        }
-    }
-}
-
-// MARK: 2b 음성인식 · AI
-
-struct RecognitionPane: View {
-    @ObservedObject var model: SettingsModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            SettingsSection("음성 인식") {
-                SettingsRow(title: "음성 인식을 애플 서버에서 처리",
-                            subtitle: "기본 켬. 더 정확하지만 인터넷이 필요하고 한 번에 약 1분까지 인식합니다. 끄면 인터넷 없이 이 맥에서만 인식하지만 정확도가 떨어집니다.",
+                SettingsRow(title: "화상 회의 녹음 시작 / 종료",
+                            subtitle: "내 목소리와 스피커로 나오는 소리를 함께 담습니다. 화면 기록 권한이 필요합니다.") {
+                    SlotHotKeyField(slot: .videoCall, model: model)
+                }
+                // ⚠️ 짧게 둔다. "끄는 걸 잊으면 알려 준다"는 실제로 잊었을 때 그 자리에서
+                //    알림창이 뜨므로 여기 미리 적을 필요가 없다.
+                SettingsRow(title: "하이라이트",
+                            subtitle: "녹음 중 누르면 그 자리부터 표시가 시작되고, 다시 누르면 끝납니다. 표시한 말은 회의록에 꼭 들어갑니다.",
                             last: true) {
-                    InkToggle(isOn: $model.forceServer)
+                    SlotHotKeyField(slot: .highlight, model: model)
                 }
             }
 
-            SettingsSection("요약") {
-                SettingsRow(title: "AI 로 정리하기", subtitle: "끄면 받아쓰기 원문을 그대로 붙여 넣습니다.") {
-                    InkToggle(isOn: $model.polishEnabled)
-                }
-                // 받아쓰기와 회의록을 따로 고른다. 받아쓰기는 커서에 바로 들어가야 해서 속도가
-                // 먼저고, 회의록은 이미 받아쓰기에 2~5분을 썼으니 잘 뽑는 게 먼저다.
-                SettingsRow(title: "받아쓰기 정리", subtitle: backendHint) {
-                    choicePicker(Prefs.Choice(backend: model.backend, tier: model.tier)) {
-                        model.backend = $0.backend; model.tier = $0.tier
-                    }
-                }
-                SettingsRow(title: "회의록 요약", subtitle: meetingHint) {
-                    choicePicker(Prefs.Choice(backend: model.meetingBackend, tier: model.meetingTier)) {
-                        model.meetingBackend = $0.backend; model.meetingTier = $0.tier
-                    }
-                }
-                PolishStyleRow(model: model)
-                SettingsRow(title: "세부 모델", subtitle: modelHint, last: model.backend == .apple) {
-                    if model.backend == .apple {
-                        Text("이 맥의 Apple Intelligence 모델을 씁니다.").font(.system(size: 12)).foregroundColor(.text3)
-                    } else if model.backend == .gemini || model.backend == .auto {
-                        PopupLabel(title: model.geminiModel, options: Prefs.geminiModels,
-                                   selected: Prefs.geminiModels.firstIndex(of: model.geminiModel)) {
-                            model.geminiModel = Prefs.geminiModels[$0]
-                        }
-                    } else {
-                        PopupLabel(title: model.claudeModel, options: Prefs.models,
-                                   selected: Prefs.models.firstIndex(of: model.claudeModel)) {
-                            model.claudeModel = Prefs.models[$0]
-                        }
-                    }
-                }
-                if model.backend != .apple {
-                }
-            }
-
-            if model.backend != .apple {
-                SettingsSection("API 키") {
-                    if false {
-                        EmptyView()
-                    } else {
-                        // 받아쓰기와 회의록이 서로 다른 회사를 쓸 수 있으니 필요한 키를 전부 보여 준다.
-                        // AUTO 는 키가 있는 것 중에 고르므로 셋 다 보여 준다 — 넣어 둘수록 잘 고른다.
-                        ForEach(neededKeySlots, id: \.self) { APIKeyRow(slot: $0) }
+            SettingsSection("정리") {
+                SettingsRow(title: "회의록 요약 정도", subtitle: model.meetingDetail.hint, last: true) {
+                    HStack(spacing: 10) {
+                        DotSlider(index: Binding(
+                            get: { model.meetingDetail.rawValue - 1 },
+                            set: { model.meetingDetail = Prefs.MeetingDetail(rawValue: $0 + 1) ?? .normal }
+                        ), count: Prefs.MeetingDetail.allCases.count)
+                        // 점만 두면 어느 쪽이 자세한 쪽인지 알 수 없다. 고른 단계 이름을 옆에 붙인다.
+                        Text(model.meetingDetail.title)
+                            .font(.system(size: 12, weight: .medium)).foregroundColor(.ink)
+                            .frame(width: 58, alignment: .leading)
                     }
                 }
             }
-        }
-    }
 
-    /// 빠른 것과 좋은 것을 한 목록에 늘어놓는다. 모델 이름은 비개발자에게 뜻이 없어서
-    /// "Gemini — 빠름" 처럼 회사와 등급만 보여 준다.
-    private func choicePicker(_ current: Prefs.Choice,
-                              onPick: @escaping (Prefs.Choice) -> Void) -> some View {
-        PopupLabel(title: current.title,
-                   options: Prefs.choices.map(\.title),
-                   selected: Prefs.choices.firstIndex(of: current) ?? 0) {
-            onPick(Prefs.choices[$0])
-        }
-    }
-
-    private var meetingHint: String {
-        switch model.meetingBackend {
-        case .auto:   return "무료인 Gemini 부터 씁니다. 안 되면 ChatGPT, Claude 순입니다. 이 맥의 Apple AI 는 긴 회의에 쓰지 않습니다."
-        case .apple:  return "긴 회의는 이 맥의 모델이 내용을 뒤집을 수 있습니다. 클라우드 모델을 권합니다."
-        default:      return "받아쓰기와 따로 고릅니다. 회의록은 시간이 조금 더 걸려도 잘 정리하는 쪽이 낫습니다."
-        }
-    }
-
-    /// 지금 설정으로 필요한 키 칸들. 둘 중 하나라도 AUTO 면 셋 다 보여 준다.
-    private var neededKeySlots: [KeychainStore.Slot] {
-        let all: [KeychainStore.Slot] = [.gemini, .anthropic, .openai]
-        if model.backend == .auto || model.meetingBackend == .auto { return all }
-        let used = Set([model.backend.keySlot, model.meetingBackend.keySlot].compactMap { $0 })
-        return all.filter { used.contains($0) }
-    }
-
-    private var backendHint: String {
-        switch model.backend {
-        case .auto:   return AppleClient.availability().ok
-                             ? "추천. 이 맥의 Apple AI 와 Gemini 를 함께 써서 빠르고 나은 답을 고릅니다."
-                             : "이 맥의 Apple AI 를 쓸 수 없어 Gemini 만 사용합니다."
-        case .gemini: return "구글 AI 입니다. 무료 키로 쓸 수 있고 1~5초 걸리며, 혼잡할 땐 실패하기도 합니다."
-        case .apple:  return AppleClient.availability().note
-        case .api:    return "Anthropic 의 Claude 입니다. 유료 크레딧이 필요하고 1초 안팎 걸립니다."
-        case .openai: return "OpenAI 의 ChatGPT 입니다. 유료 크레딧이 필요합니다. ChatGPT 구독과는 요금이 따로 나갑니다."
-        }
-    }
-
-    private var modelHint: String {
-        switch model.backend {
-        case .gemini, .auto: return "Gemini 안에서 먼저 쓸 모델입니다. 늦으면 다른 모델도 같이 씁니다."
-        case .apple:  return "인터넷을 쓰지 않습니다."
-        default:      return "정리는 가벼운 일이라 Haiku 로 충분합니다."
+            Text("어떤 AI 가 회의록을 쓸지는 'AI 연결' 에서 고릅니다. 녹음은 이 컴퓨터 안에서 글자로 바꾸고, 정리할 때만 그 글을 AI 에 보냅니다.")
+                .font(.system(size: 11)).foregroundColor(.text3)
         }
     }
 }
@@ -612,60 +627,187 @@ struct APIKeyRow: View {
 }
 
 
-// MARK: 단축키
+// MARK: AI 연결 — 어떤 AI 로, 무슨 키로
 
-struct HotKeyPane: View {
+/// 받아쓰기와 회의록이 **같이 쓰는** 것만 모은다. 모델을 매일 바꾸는 사람은 없어서
+/// 각 기능 탭에 두면 그 탭이 개발자 도구처럼 보인다.
+struct AIPane: View {
     @ObservedObject var model: SettingsModel
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            SettingsSection("직접 설정") {
-                SettingsRow(title: "받아쓰기 시작 / 종료",
-                            subtitle: "칸을 클릭하고 원하는 조합을 누릅니다. ⌃⌥D 처럼 수정자+키, 또는 fn⌃ 처럼 수정자 키만 눌렀다 떼도 됩니다.",
-                            warning: model.hotKeyNeedsAccessibility ? "수정자 키만 쓰는 단축키는 손쉬운 사용 권한이 필요합니다 — 허용하기" : nil,
-                            warningAction: model.actions.openAccessibility,
-                            last: true) {
-                    HotKeyRecorderField(model: model)
-                }
-            }
-            SettingsSection("프리셋") {
-                ForEach(Array(HotKeyPreset.all.enumerated()), id: \.offset) { i, p in
-                    let on = model.customHotKey == nil && model.hotKeyIndex == i
-                    Button(action: { model.hotKeyIndex = i; model.customHotKey = nil }) {
-                        HStack {
-                            Image(systemName: on ? "checkmark.circle.fill" : "circle")
-                                .foregroundColor(on ? .ink : .text4)
-                            KeyCapLarge(p.title)
-                            Spacer()
-                        }
-                        .padding(.horizontal, 14).frame(height: 44)
-                        .contentShape(Rectangle())
+            // 받아쓰기와 회의록을 따로 고른다. 받아쓰기는 커서에 바로 들어가야 해서 속도가
+            // 먼저고, 회의록은 이미 받아쓰기에 2~5분을 썼으니 잘 뽑는 게 먼저다.
+            // ⚠️ 둘을 나란히 둬야 "따로 고를 수 있다"가 설명 없이 보인다.
+            SettingsSection("무엇으로 정리할지") {
+                SettingsRow(title: "받아쓰기 정리", subtitle: backendHint) {
+                    choicePicker(Prefs.Choice(backend: model.backend, tier: model.tier)) {
+                        model.backend = $0.backend; model.tier = $0.tier
                     }
-                    .buttonStyle(.plain)
-                    if i < HotKeyPreset.all.count - 1 { HairLine().padding(.leading, 14) }
+                }
+                SettingsRow(title: "회의록 요약", subtitle: meetingHint, last: true) {
+                    choicePicker(Prefs.Choice(backend: model.meetingBackend, tier: model.meetingTier)) {
+                        model.meetingBackend = $0.backend; model.meetingTier = $0.tier
+                    }
                 }
             }
-            Text("단축키는 접근성 권한 없이도 어느 앱에서나 동작합니다. 다른 앱이 같은 조합을 쓰면 등록에 실패할 수 있습니다. ⌘ 단독 조합(⌘C 등)은 다른 앱과 겹치기 쉬우니 ⌃⌥ 를 권합니다.")
-                .font(.system(size: 11)).foregroundColor(.text3)
+
+            if model.backend != .apple {
+                SettingsSection("API 키") {
+                    // 받아쓰기와 회의록이 서로 다른 회사를 쓸 수 있으니 필요한 키를 전부 보여 준다.
+                    // '자동으로 선택'은 키가 있는 것 중에 고르므로 셋 다 보여 준다 — 넣어 둘수록 잘 고른다.
+                    ForEach(neededKeySlots, id: \.self) { APIKeyRow(slot: $0) }
+                }
+            }
+
+            SettingsSection("세부 설정") {
+                SettingsRow(title: "세부 모델", subtitle: modelHint,
+                            last: model.backend == .apple) {
+                    if model.backend == .apple {
+                        Text("이 맥의 Apple Intelligence 모델을 씁니다.").font(.system(size: 12)).foregroundColor(.text3)
+                    } else if model.backend == .gemini || model.backend == .auto {
+                        PopupLabel(title: model.geminiModel, options: Prefs.geminiModels,
+                                   selected: Prefs.geminiModels.firstIndex(of: model.geminiModel)) {
+                            model.geminiModel = Prefs.geminiModels[$0]
+                        }
+                    } else {
+                        PopupLabel(title: model.claudeModel, options: Prefs.models,
+                                   selected: Prefs.models.firstIndex(of: model.claudeModel)) {
+                            model.claudeModel = Prefs.models[$0]
+                        }
+                    }
+                }
+                if model.backend != .apple {
+                    ActionRow("쓸 수 있는 모델 다시 불러오기",
+                              "지금 키로 쓸 수 있는 Gemini 모델을 조회합니다.",
+                              action: model.actions.listGeminiModels, last: true)
+                }
+            }
+        }
+    }
+
+    /// 빠른 것과 좋은 것을 한 목록에 늘어놓는다. 모델 이름은 비개발자에게 뜻이 없어서
+    /// "Gemini — 빠름" 처럼 회사와 등급만 보여 준다.
+    private func choicePicker(_ current: Prefs.Choice,
+                              onPick: @escaping (Prefs.Choice) -> Void) -> some View {
+        PopupLabel(title: current.title,
+                   options: Prefs.choices.map(\.title),
+                   selected: Prefs.choices.firstIndex(of: current) ?? 0) {
+            onPick(Prefs.choices[$0])
+        }
+    }
+
+    private var meetingHint: String {
+        switch model.meetingBackend {
+        case .auto:   return "무료인 Gemini 부터 씁니다. 안 되면 ChatGPT, Claude 순입니다. 이 맥의 Apple AI 는 긴 회의에 쓰지 않습니다."
+        case .apple:  return "긴 회의는 이 맥의 모델이 내용을 뒤집을 수 있습니다. 클라우드 모델을 권합니다."
+        default:      return "받아쓰기와 따로 고릅니다. 회의록은 시간이 조금 더 걸려도 잘 정리하는 쪽이 낫습니다."
+        }
+    }
+
+    /// 지금 설정으로 필요한 키 칸들. 둘 중 하나라도 '자동으로 선택'이면 셋 다 보여 준다.
+    private var neededKeySlots: [KeychainStore.Slot] {
+        let all: [KeychainStore.Slot] = [.gemini, .anthropic, .openai]
+        if model.backend == .auto || model.meetingBackend == .auto { return all }
+        let used = Set([model.backend.keySlot, model.meetingBackend.keySlot].compactMap { $0 })
+        return all.filter { used.contains($0) }
+    }
+
+    private var backendHint: String {
+        switch model.backend {
+        case .auto:   return AppleClient.availability().ok
+                             ? "추천. 이 맥의 Apple AI 와 Gemini 를 함께 써서 빠르고 나은 답을 고릅니다."
+                             : "이 맥의 Apple AI 를 쓸 수 없어 Gemini 만 사용합니다."
+        case .gemini: return "구글 AI 입니다. 무료 키로 쓸 수 있고 1~5초 걸리며, 혼잡할 땐 실패하기도 합니다."
+        case .apple:  return AppleClient.availability().note
+        case .api:    return "Anthropic 의 Claude 입니다. 유료 크레딧이 필요하고 1초 안팎 걸립니다."
+        case .openai: return "OpenAI 의 ChatGPT 입니다. 유료 크레딧이 필요합니다. ChatGPT 구독과는 요금이 따로 나갑니다."
+        }
+    }
+
+    private var modelHint: String {
+        switch model.backend {
+        case .gemini, .auto: return "Gemini 안에서 먼저 쓸 모델입니다. 늦으면 다른 모델도 같이 씁니다."
+        case .apple:  return "인터넷을 쓰지 않습니다."
+        default:      return "정리는 가벼운 일이라 Haiku 로 충분합니다."
         }
     }
 }
 
-// MARK: 고급 · 진단
+// MARK: 문제 해결 — 안 될 때만 여는 곳
 
-// MARK: 2e 업데이트
+/// 평소엔 안 쓰는 것만 모은다. 진단을 맨 위에 둬서 "무엇이 빠졌는지" 부터 보게 하고,
+/// 그 아래에 빠진 것을 채우는 버튼을 둔다.
+struct TroublePane: View {
+    @ObservedObject var model: SettingsModel
 
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            SettingsSection("지금 상태") {
+                ActionRow("현재 상태 진단", "권한 4종, 인식 언어, 키 유무를 한 화면에 보여 줍니다.",
+                          action: model.actions.showDiagnostics, last: true)
+            }
+
+            SettingsSection("권한") {
+                ActionRow("손쉬운 사용 권한 열기",
+                          "받아쓴 글을 커서 위치에 자동으로 넣으려면 필요합니다.",
+                          action: model.actions.openAccessibility)
+                ActionRow("받아쓰기 설정 열기",
+                          "시스템 설정 > 키보드 > 받아쓰기가 꺼져 있으면 말을 글자로 바꾸지 못합니다.",
+                          action: model.actions.openDictationSettings, last: true)
+            }
+
+            SettingsSection("시험해 보기") {
+                ActionRow("붙여넣기 테스트", "3초 뒤 커서 위치에 텍스트를 넣습니다. 자동 붙여넣기가 켜져 있어야 합니다.",
+                          action: model.actions.testPaste)
+                ActionRow("AI 모델 연결 테스트", "짧은 문장을 실제로 정리해 봅니다.",
+                          action: model.actions.testBackend, last: true)
+            }
+
+            SettingsSection("개발자에게 알리기") {
+                ActionRow("문제 알리기",
+                          "무슨 일이 있었는지 적으면 메일 앱이 열립니다. 보내기 전에 내용을 보고 고칠 수 있습니다.",
+                          buttonTitle: "쓰기", action: model.actions.reportProblem, last: true)
+            }
+
+            SettingsSection("그 밖에") {
+                ActionRow("처음 설정 안내 다시 보기", "권한·AI 모델·단축키를 처음처럼 한 단계씩 다시 설정합니다.",
+                          action: model.actions.reopenOnboarding)
+                ActionRow("로그 열기", Log.url.path, action: model.actions.openLog)
+                // 로그에는 받아쓴 말이 그대로 남는다(`main.swift` 의 "받아쓰기 원문"). 치울 길을 둔다.
+                ActionRow("로그 지우기", "로그에는 받아쓴 말이 들어 있습니다. 비우면 되돌릴 수 없습니다.",
+                          buttonTitle: "지우기", action: model.actions.clearLog, last: true)
+            }
+        }
+    }
+}
+
+// MARK: 업데이트 — 버전 · 바뀐 점 · 후원
+
+/// ⚠️ 버전을 **맨 위에 크게** 둔다. 전에는 "업데이트 확인" 줄의 부제 안에
+///    "지금 버전은 0.8.3 입니다" 로 묻혀 있어서, 설정에서 버전을 찾기가 어려웠다.
+///    이 자리가 '정보' 탭이 할 일을 대신한다 — 그것 때문에 탭을 하나 더 만들지 않는다.
 struct UpdatesPane: View {
     @ObservedObject var model: SettingsModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            SettingsSection("새 버전") {
-                ActionRow("업데이트 확인", "지금 버전은 \(model.appVersion) 입니다. GitHub 에 새 버전이 있으면 바뀐 점과 다운로드 버튼을 보여 줍니다.",
-                          buttonTitle: "확인", action: model.actions.checkForUpdates)
-                ActionRow("바뀐 점 보기", "지금까지 나온 버전과 바뀐 점을 GitHub 릴리스 페이지에서 봅니다.", buttonTitle: "보기", action: {
-                    if let url = URL(string: "https://github.com/yunuchoiii/brefly/releases") { NSWorkspace.shared.open(url) }
-                }, last: true)
+            SettingsSection(nil) {
+                HStack(spacing: 12) {
+                    LogoMark(size: 34)
+                    VStack(alignment: .leading, spacing: 2) {
+                        // `appVersion` 에 이미 "Brefly" 가 들어 있다. 앞에 또 붙이면 두 번 나온다.
+                        Text(model.appVersion)
+                            .font(.system(size: 14, weight: .bold)).foregroundColor(.ink)
+                        Text("새 버전이 있으면 바뀐 점과 설치 버튼을 보여 줍니다.")
+                            .font(.system(size: 11)).foregroundColor(.text3)
+                    }
+                    Spacer()
+                    SmallButton("업데이트 확인", action: model.actions.checkForUpdates)
+                }
+                .padding(.horizontal, 14).padding(.vertical, 14)
             }
+
             SettingsSection("자동 확인") {
                 SettingsRow(title: "실행할 때 자동으로 확인",
                             subtitle: "하루에 한 번 확인하고, 새 버전이 있을 때만 알려 줍니다. \"나중에\"를 누른 버전은 다시 묻지 않습니다.",
@@ -673,13 +815,20 @@ struct UpdatesPane: View {
                     InkToggle(isOn: $model.autoCheckUpdates)
                 }
             }
-            SettingsSection("설치 방법") {
-                SettingsRow(title: "다운로드 → Applications 로 끌어 넣기",
-                            subtitle: "다운로드를 누르면 DMG 를 받습니다. 열어서 Brefly 를 Applications 폴더에 끌어 넣으면 덮어써지고, 설정과 권한은 그대로 유지됩니다.",
+
+            SettingsSection("바뀐 점") {
+                ActionRow("지금까지 바뀐 점 보기", "나온 버전과 바뀐 점을 GitHub 릴리스 페이지에서 봅니다.",
+                          buttonTitle: "보기", action: {
+                    if let url = URL(string: "https://github.com/yunuchoiii/brefly/releases") { NSWorkspace.shared.open(url) }
+                })
+                SettingsRow(title: "손으로 설치해야 한다면",
+                            subtitle: "다운로드한 DMG 를 열어 Brefly 를 Applications 폴더에 끌어 넣으면 덮어써지고, 설정과 권한은 그대로 유지됩니다.",
                             last: true) { EmptyView() }
             }
+
             SettingsSection("후원") {
-                ActionRow("커피 한 잔으로 응원하기", "Brefly 는 무료입니다. 도움이 됐다면 GitHub Sponsors 로 응원해 주세요.", action: {
+                ActionRow("커피 한 잔으로 응원하기", "Brefly 는 무료입니다. 도움이 됐다면 GitHub Sponsors 로 응원해 주세요.",
+                          buttonTitle: "열기", action: {
                     if let url = URL(string: "https://github.com/sponsors/yunuchoiii") { NSWorkspace.shared.open(url) }
                 }, last: true)
             }
@@ -687,27 +836,61 @@ struct UpdatesPane: View {
     }
 }
 
-struct AdvancedPane: View {
-    @ObservedObject var model: SettingsModel
-    var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            SettingsSection("진단") {
-                ActionRow("현재 상태 진단", "권한 4종, 인식 언어, 키 유무를 한 화면에 보여 줍니다.", action: model.actions.showDiagnostics)
-                ActionRow("AI 모델 연결 테스트", "짧은 문장을 실제로 정리해 봅니다.", action: model.actions.testBackend)
-                ActionRow("붙여넣기 테스트", "3초 뒤 커서 위치에 텍스트를 넣습니다. 자동 붙여넣기가 켜져 있어야 합니다.", action: model.actions.testPaste)
-                ActionRow("Gemini 모델 목록", "이 키로 쓸 수 있는 모델을 조회합니다.", action: model.actions.listGeminiModels)
-                ActionRow("로그 열기", Log.url.path, action: model.actions.openLog, last: true)
-            }
-            SettingsSection("시스템") {
-                ActionRow("처음 설정 안내 다시 보기", "권한·AI 모델·단축키를 처음처럼 한 단계씩 다시 설정합니다.", action: model.actions.reopenOnboarding)
-                ActionRow("받아쓰기 설정 열기", "시스템 설정 > 키보드 > 받아쓰기가 꺼져 있으면 인식이 되지 않습니다.", action: model.actions.openDictationSettings)
-                ActionRow("손쉬운 사용 권한 열기", "자동 붙여넣기에 필요합니다.", action: model.actions.openAccessibility, last: true)
-            }
-        }
-    }
-}
 
 // MARK: - 조각
+
+/// 눈금이 박힌 슬라이더. 단계가 몇 개뿐이고 각 칸에 이름이 있을 때 쓴다 —
+/// 드롭다운과 달리 **어느 쪽이 더 센 쪽인지**가 한눈에 보인다.
+///
+/// 눈금을 눌러도 되고 끌어도 된다. 끝에서 더 끌어도 범위를 벗어나지 않는다.
+struct DotSlider: View {
+    @Binding var index: Int
+    let count: Int
+    var width: CGFloat = 108
+
+    private let knob: CGFloat = 14
+    private let tick: CGFloat = 6
+    private var step: CGFloat { (width - knob) / CGFloat(max(count - 1, 1)) }
+    private func center(_ i: Int) -> CGFloat { knob / 2 + step * CGFloat(i) }
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            // ⚠️ 선은 **첫 점에서 끝 점까지**만 깐다. `width` 전체에 깔면 손잡이 반지름만큼
+            //    (7pt) 양쪽에 점 없는 선이 삐져나온다 — 눈금이 다섯인데 선은 그보다 길어서
+            //    "왜 끝에 선만 있지?" 로 보인다(2026-10-02).
+            Capsule().fill(Color.lineStrong)
+                .frame(width: center(count - 1) - center(0), height: 2)
+                .offset(x: center(0))
+            Capsule().fill(Color.coral)
+                .frame(width: center(index) - center(0), height: 2)
+                .offset(x: center(0))
+            // ⚠️ 손잡이를 **점보다 먼저** 그리고 속을 비운다. 꽉 찬 손잡이를 점 위에 얹으면
+            //    고른 자리의 점이 가려져 양 끝에서 점이 네 개로 보인다. 고리로 두면 다섯 개가
+            //    늘 보이고, 고른 자리는 "점에 테두리가 둘린 것"으로 읽힌다.
+            Circle()
+                .fill(Color.paper)
+                .overlay(Circle().stroke(Color.coral, lineWidth: 2))
+                .frame(width: knob, height: knob)
+                .offset(x: center(index) - knob / 2)
+            ForEach(0..<count, id: \.self) { i in
+                Circle()
+                    .fill(i <= index ? Color.coral : Color.lineStrong)
+                    .frame(width: tick, height: tick)
+                    .offset(x: center(i) - tick / 2)
+            }
+        }
+        .frame(width: width, height: knob)
+        .contentShape(Rectangle())
+        .animation(.easeOut(duration: 0.12), value: index)
+        .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+            let raw = ((value.location.x - knob / 2) / step).rounded()
+            let next = min(max(Int(raw), 0), count - 1)
+            if next != index { index = next }
+        })
+        .accessibilityElement()
+        .accessibilityValue("\(index + 1) / \(count)")
+    }
+}
 
 struct SettingsSection<Content: View>: View {
     let title: String?
@@ -947,6 +1130,109 @@ struct SmallButton: View {
 
 /// 클릭하면 녹음 상태가 되고, 앱에 들어오는 다음 keyDown 을 단축키로 저장한다. Esc 로 취소.
 /// 첫 응답자 방식은 SwiftUI 호스팅 창에서 키를 못 받아서, 로컬 이벤트 모니터로 가로챈다.
+/// 받아쓰기 말고 나머지 단축키(대면·화상·하이라이트)를 고르는 칸.
+/// ⚠️ 받아쓰기용 `HotKeyRecorderField` 와 따로 둔다 — 그쪽은 프리셋과 "직접 설정" 표시가
+///    얽혀 있고, 이쪽은 **비워 둘 수 있어야** 한다(안 쓰는 단축키를 잡아 두면 다른 앱과 부딪힌다).
+struct SlotHotKeyField: View {
+    let slot: HotKey.Slot
+    @ObservedObject var model: SettingsModel
+    @State private var recording = false
+    @State private var held = ""
+    @State private var monitors: [Any] = []
+    @State private var maxHeld: UInt32 = 0
+
+    private var combo: HotKeyCombo? { Prefs.extraHotKey(slot) }
+
+    private var label: String {
+        if recording { return held.isEmpty ? "키 조합을 누르세요…" : held + "…" }
+        return combo?.title ?? "없음"
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button(action: { if !recording { start() } }) {
+                Text(label)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(recording ? .coralDeep : (combo == nil ? .text4 : .ink))
+                    .padding(.horizontal, 10).frame(height: 28)
+                    .background(recording ? Color.coral.opacity(0.08) : Color.fill)
+                    .overlay(RoundedRectangle(cornerRadius: 7)
+                        .stroke(recording ? Color.coral : Color.lineStrong, lineWidth: 1))
+                    .cornerRadius(7)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(recording ? "Esc 로 취소 · 수정자 키만 눌렀다 떼도 저장됩니다." : "클릭해서 바꾸기")
+            // ⚠️ 글자('지우기')가 아니라 휴지통이다. 파란 링크 글자는 '열기' 같은 **가는 길**로
+            //    읽히는데 이건 **없애는 일**이다. 빨간 휴지통이면 누르기 전에 한 번 멈칫한다.
+            if combo != nil, !recording {
+                Button(action: { Prefs.setExtraHotKey(nil, for: slot); model.bumpHotKeys() }) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.coral)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("이 단축키를 지웁니다")
+            }
+        }
+        .fixedSize()
+        .onDisappear { stop() }
+    }
+
+    private func save(_ c: HotKeyCombo) {
+        // ⚠️ 겹치면 저장하지 않는다. 덮어쓰면 다른 단축키가 말없이 죽고,
+        //    그대로 두면 둘 중 하나가 영영 안 눌린다.
+        if let owner = Prefs.hotKeyOwner(c, excluding: slot) {
+            stop()
+            let alert = NSAlert()
+            alert.messageText = "\(c.title) 는 이미 쓰고 있습니다"
+            alert.informativeText = "'\(owner)' 에 정해 둔 조합입니다. 같은 조합을 둘에 두면 "
+                + "하나는 눌리지 않습니다. 다른 조합을 골라 주세요."
+            alert.addButton(withTitle: "알겠습니다")
+            alert.runModal()
+            return
+        }
+        Prefs.setExtraHotKey(c, for: slot)
+        model.bumpHotKeys()
+        stop()
+    }
+
+    private func start() {
+        recording = true; held = ""; maxHeld = 0
+        NotificationCenter.default.post(name: .breflyHotKeyCaptureBegan, object: nil)
+        let keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if event.keyCode == UInt16(kVK_Escape) { stop(); return nil }
+            let mods = HotKeyCombo.carbonModifiers(from: event.modifierFlags)
+            guard mods != 0 else { NSSound.beep(); return nil }
+            save(HotKeyCombo(keyCode: UInt32(event.keyCode), modifiers: mods))
+            return nil
+        }
+        let flagMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
+            let now = HotKeyCombo.modifierBits(from: event.modifierFlags)
+            held = HotKeyCombo(keyCode: 0, modifiers: now).modifierSymbols
+            if now & maxHeld == maxHeld, now != maxHeld {
+                maxHeld = now
+            } else if now == 0, maxHeld != 0 {
+                save(HotKeyCombo(keyCode: HotKeyCombo.modifierOnlyKeyCode, modifiers: maxHeld))
+                return nil
+            } else if now == 0 {
+                maxHeld = 0
+            }
+            return nil
+        }
+        monitors = [keyMonitor, flagMonitor].compactMap { $0 }
+    }
+
+    private func stop() {
+        for m in monitors { NSEvent.removeMonitor(m) }
+        monitors = []
+        recording = false
+        NotificationCenter.default.post(name: .breflyHotKeyCaptureEnded, object: nil)
+    }
+}
+
 struct HotKeyRecorderField: View {
     @ObservedObject var model: SettingsModel
     @State private var recording = false
@@ -981,6 +1267,22 @@ struct HotKeyRecorderField: View {
         .onDisappear { stop() }
     }
 
+    /// 받아쓰기 단축키도 회의 단축키와 겹칠 수 있다. 같은 확인을 거친다.
+    private func saveDictation(_ c: HotKeyCombo) {
+        if let owner = Prefs.hotKeyOwner(c, excluding: .dictation) {
+            stop()
+            let alert = NSAlert()
+            alert.messageText = "\(c.title) 는 이미 쓰고 있습니다"
+            alert.informativeText = "'\(owner)' 에 정해 둔 조합입니다. 같은 조합을 둘에 두면 "
+                + "하나는 눌리지 않습니다. 다른 조합을 골라 주세요."
+            alert.addButton(withTitle: "알겠습니다")
+            alert.runModal()
+            return
+        }
+        model.customHotKey = c
+        stop()
+    }
+
     private func start() {
         recording = true
         heldModifiers = ""
@@ -997,8 +1299,7 @@ struct HotKeyRecorderField: View {
                 NSSound.beep()
                 return nil
             }
-            model.customHotKey = HotKeyCombo(keyCode: UInt32(event.keyCode), modifiers: mods)
-            stop()
+            saveDictation(HotKeyCombo(keyCode: UInt32(event.keyCode), modifiers: mods))
             return nil
         }
         let flagMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
@@ -1008,8 +1309,7 @@ struct HotKeyRecorderField: View {
                 maxHeld = now              // 더 누르는 중
             } else if now == 0, maxHeld != 0 {
                 // 전부 뗐고 그 사이 다른 키가 없었다 → 수정자 전용 단축키
-                model.customHotKey = HotKeyCombo(keyCode: HotKeyCombo.modifierOnlyKeyCode, modifiers: maxHeld)
-                stop()
+                saveDictation(HotKeyCombo(keyCode: HotKeyCombo.modifierOnlyKeyCode, modifiers: maxHeld))
                 return nil
             } else if now == 0 {
                 maxHeld = 0
@@ -1035,9 +1335,27 @@ struct HotKeyRecorderField: View {
 /// 체크한 분야의 설명과 용어가 정리 프롬프트에 들어간다. 프롬프트에 특정 직군 용어를 박아 두지 않기 위한 장치.
 struct UsageContextSection: View {
     @ObservedObject var model: SettingsModel
-    @State private var showExtras = false
+    /// 접힌 '직접 추가'를 펼친 채로 그린다. 시안으로 그 안을 확인하려고 둔다 —
+    /// 접혀 있으면 `--render-previews` 가 안쪽을 영영 못 찍는다.
+    var startExpanded = false
+    @State private var showExtras: Bool
+
+    init(model: SettingsModel, startExpanded: Bool = false) {
+        self.model = model
+        self.startExpanded = startExpanded
+        _showExtras = State(initialValue: startExpanded)
+    }
 
     private let columns = [GridItem(.flexible()), GridItem(.flexible())]
+
+    /// 적는 꼴과 그것이 하는 일을 한 줄로. 꼴 쪽 너비를 못 박아 설명이 세로로 맞게 한다.
+    private func glossaryExample(_ form: String, _ what: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(form).font(.system(size: 11, design: .monospaced)).foregroundColor(.text2)
+                .frame(width: 136, alignment: .leading)
+            Text(what)
+        }
+    }
 
     var body: some View {
         SettingsSection("주로 어디에 쓰나요?") {
@@ -1052,6 +1370,12 @@ struct UsageContextSection: View {
                     .background(Color.coral.opacity(0.08))
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.coral.opacity(0.35), lineWidth: 1))
                     .cornerRadius(8)
+                } else {
+                    // ⚠️ 설명이 처음 쓰는 사람에게만 떴다. 나머지는 칩만 보고 무엇에 쓰는지 몰랐다.
+                    //    ⚠️ 이 설정은 **회의록에도 걸린다**(`Glossary.apply`). 받아쓰기 탭에 있어서
+                    //       받아쓰기 전용으로 읽히므로 여기 적어 둔다.
+                    Text("받아쓰기와 회의록에 모두 적용됩니다. 여러 개 고를 수 있습니다.")
+                        .font(.system(size: 11)).foregroundColor(.text3)
                 }
 
                 LazyVGrid(columns: columns, spacing: 8) {
@@ -1107,8 +1431,18 @@ struct UsageContextSection: View {
                     }
                     VStack(alignment: .leading, spacing: 4) {
                         Text("추가 용어 (선택)").font(.system(size: 12, weight: .semibold)).foregroundColor(.ink)
-                        Text("한 줄에 하나씩 적습니다. \"잘못 들린 말 → 올바른 표기\" 또는 단어만 적어도 됩니다. 예) 에스씨에스엠 → SCSM")
-                            .font(.system(size: 11)).foregroundColor(.text3)
+                        // ⚠️ 두 형식이 하는 일이 **다르다.** 화살표는 받아 적은 뒤 글자를 바꾸고
+                        //    (`Glossary.apply`, 받아쓰기·회의록 둘 다), 단어만 적은 것은 인식기에
+                        //    미리 알려 주기만 한다(`contextualStrings`, 받아쓰기만 — whisper 에는
+                        //    일부러 안 넘긴다, `Whisper.swift:54`). 전에는 "또는 단어만 적어도
+                        //    됩니다"로만 적어 둬서 무엇이 달라지는지 알 수 없었다.
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("한 줄에 하나씩 적습니다.")
+                            glossaryExample("에스씨에스엠 → SCSM", "잘못 들린 말을 올바른 표기로 바꿉니다")
+                            glossaryExample("SCSM", "이런 말이 나올 수 있다고 미리 알려 줍니다 (받아쓰기만)")
+                            Text("잘못 들린 적이 있으면 화살표로, 아직 없으면 단어만 적습니다.")
+                        }
+                        .font(.system(size: 11)).foregroundColor(.text3)
                         TextEditor(text: $model.glossary)
                             .font(.system(size: 12, design: .monospaced)).frame(height: 90)
                             .padding(6).background(Color.fill).cornerRadius(7)

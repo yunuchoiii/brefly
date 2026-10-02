@@ -210,7 +210,8 @@ enum Prefs {
 
         var shortTitle: String {
             switch self {
-            case .auto:   return "AUTO"
+            // 화면에 그대로 뜨는 말이다. 영문 약어는 비개발자가 읽는 화면에 두지 않는다.
+            case .auto:   return "자동으로 선택"
             case .gemini: return "Gemini"
             case .apple:  return "Apple AI (이 맥)"
             case .api:    return "Claude"
@@ -291,6 +292,41 @@ enum Prefs {
     static var meetingBackend: Backend {
         get { Backend(rawValue: d.string(forKey: "meetingBackend") ?? "") ?? .auto }
         set { d.set(newValue.rawValue, forKey: "meetingBackend") }
+    }
+
+    /// 회의록을 얼마나 자세히 쓸지. 1~5 단계이고 기본은 3(보통)이다.
+    ///
+    /// 단계가 올라가면 **담는 항목과 깊이**가 늘어난다. 분량을 늘리라는 뜻이 아니다 —
+    /// 그렇게 시키면 모델이 원문에 없는 배경·추측을 보태 회의록을 통째로 못 쓰게 만든다.
+    /// 어떤 단계에서도 "원문에 없는 것을 만들지 않는다"가 먼저다(`MeetingNotes.instruction`).
+    enum MeetingDetail: Int, CaseIterable {
+        case brief = 1, short, normal, detailed, full
+
+        var title: String {
+            switch self {
+            case .brief:    return "아주 짧게"
+            case .short:    return "짧게"
+            case .normal:   return "보통"
+            case .detailed: return "자세히"
+            case .full:     return "아주 자세히"
+            }
+        }
+
+        /// 설정 화면에 적을 한 줄. 무엇이 늘고 주는지를 말한다.
+        var hint: String {
+            switch self {
+            case .brief:    return "결정된 것과 할 일만 추립니다. 길어야 대여섯 줄입니다."
+            case .short:    return "결정된 것과 할 일에, 무엇을 논의했는지를 한 줄씩 더합니다."
+            case .normal:   return "결정·할 일·논의한 것·다음에 볼 것을 고루 담습니다."
+            case .detailed: return "오간 숫자와 날짜, 의견이 갈린 까닭까지 빠짐없이 담습니다."
+            case .full:     return "이야기가 오간 차례까지 담습니다. 회의에 못 온 사람이 읽을 때 씁니다."
+            }
+        }
+    }
+
+    static var meetingDetail: MeetingDetail {
+        get { MeetingDetail(rawValue: d.object(forKey: "meetingDetail") as? Int ?? 3) ?? .normal }
+        set { d.set(newValue.rawValue, forKey: "meetingDetail") }
     }
 
     static var meetingTier: Tier {
@@ -441,6 +477,45 @@ enum Prefs {
     /// 실제로 등록할 단축키.
     static var currentHotKey: HotKeyCombo {
         customHotKey ?? HotKeyPreset.preset(at: hotKeyIndex).combo
+    }
+
+    // MARK: 회의 단축키
+
+    /// 받아쓰기 말고 나머지 단축키. 저마다 따로 고른다 — 대면과 화상은 권한도 동작도 달라서
+    /// 하나로 묶으면 무엇이 시작될지 누를 때마다 생각해야 한다.
+    /// 비워 두면 그 단축키는 등록하지 않는다. 기본값이 비어 있다 — 쓰지도 않는 조합을
+    /// 미리 잡아 두면 다른 앱과 부딪힌다.
+    static func extraHotKey(_ slot: HotKey.Slot) -> HotKeyCombo? {
+        let code = "hotkey.\(slot.rawValue).code", mods = "hotkey.\(slot.rawValue).mods"
+        guard d.object(forKey: code) != nil else { return nil }
+        return HotKeyCombo(keyCode: UInt32(d.integer(forKey: code)),
+                           modifiers: UInt32(d.integer(forKey: mods)))
+    }
+
+    /// 이 조합을 이미 쓰고 있는 다른 자리. 없으면 nil.
+    ///
+    /// ⚠️ 같은 조합을 둘에 정하면 **하나는 절대 안 눌린다** — 먼저 등록된 쪽이 가로채고,
+    ///    화면에는 둘 다 정해진 것처럼 보인다. 무엇이 고장인지 알 길이 없어서 저장 전에 막는다.
+    static func hotKeyOwner(_ combo: HotKeyCombo, excluding slot: HotKey.Slot?) -> String? {
+        if slot != .dictation, currentHotKey == combo { return "받아쓰기 시작 / 종료" }
+        let names: [HotKey.Slot: String] = [
+            .inPerson: "대면 회의 녹음", .videoCall: "화상 회의 녹음", .highlight: "하이라이트",
+        ]
+        for (other, name) in names where other != slot {
+            if extraHotKey(other) == combo { return name }
+        }
+        return nil
+    }
+
+    static func setExtraHotKey(_ combo: HotKeyCombo?, for slot: HotKey.Slot) {
+        let code = "hotkey.\(slot.rawValue).code", mods = "hotkey.\(slot.rawValue).mods"
+        if let combo {
+            d.set(Int(combo.keyCode), forKey: code)
+            d.set(Int(combo.modifiers), forKey: mods)
+        } else {
+            d.removeObject(forKey: code)
+            d.removeObject(forKey: mods)
+        }
     }
 
     // MARK: 기타

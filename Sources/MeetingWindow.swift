@@ -17,6 +17,10 @@ struct MeetingDocument {
     var speakersKnown: Bool = false
     /// 요약이 실패한 채로 저장됐으면 그 까닭. 있으면 창 위에 띠와 '다시 요약'이 뜬다.
     var summaryFailed: String? = nil
+    /// 어느 AI 가 뽑았는지. AUTO 는 회사를 오가므로 결과만 보고는 알 수 없다.
+    var usedModel: (label: String, name: String)? = nil
+    /// 녹음 중에 사용자가 찍은 하이라이트 수.
+    var highlightCount: Int = 0
 
     var dateText: String {
         let f = DateFormatter()
@@ -85,6 +89,9 @@ struct MeetingResultView: View {
     @State private var draft = ""
     @State private var toast: String?
     @State private var retrying = false
+    /// "다시 요약"에서 고른 자세함. 설정값에서 시작하고, 이 창에서 고른 것은 창이 살아 있는 동안 남는다 —
+    /// 한 번 더 눌러 볼 때 같은 단계를 다시 고르게 하지 않는다.
+    @State private var retryDetail = Prefs.meetingDetail
     /// 모델이 마지막으로 낸 글. 사용자가 고쳤는지 가리는 기준이다.
     /// 이름이 바뀌면 팝오버 목록도 따라 바뀌어야 한다.
     var onRenamed: (() -> Void)? = nil
@@ -184,7 +191,7 @@ struct MeetingResultView: View {
                     .lineLimit(2).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
-            OutlineButton(retrying ? "요약하는 중…" : "다시 요약", wide: false) { retrySummary() }
+            OutlineButton(retrying ? "요약하는 중…" : "다시 요약", wide: false) { askRetry() }
                 .disabled(retrying)
         }
         .padding(.horizontal, 20).padding(.vertical, 12)
@@ -217,16 +224,34 @@ struct MeetingResultView: View {
         flash("이름을 바꿨습니다.")
     }
 
-    /// 고쳐 둔 글이 있으면 먼저 묻는다. 모델 결과로 덮어쓰면 사용자가 쓴 것이 사라진다.
+    /// 다시 요약하기 전에 **얼마나 자세히 쓸지** 고르게 한다. 첫 요약은 설정대로 하지만,
+    /// 받아 보고 "너무 짧다 / 너무 길다"를 아는 것은 이때다.
+    ///
+    /// 고쳐 둔 글이 있으면 사라진다는 것도 같이 알린다 — 모델 결과로 덮어쓰기 때문이다.
     private func askRetry() {
-        guard document.notes != lastSummary else { retrySummary(); return }
         let alert = NSAlert()
         alert.messageText = "다시 요약할까요?"
-        alert.informativeText = "지금 회의록을 모델이 새로 쓴 것으로 바꿉니다. "
-            + "고쳐 두신 내용은 사라집니다. 받아 적은 원문은 그대로입니다."
+        alert.informativeText = document.notes == lastSummary
+            ? "받아 적은 원문으로 요약만 다시 만듭니다. 원문은 그대로입니다."
+            : "지금 회의록을 모델이 새로 쓴 것으로 바꿉니다. "
+              + "고쳐 두신 내용은 사라집니다. 받아 적은 원문은 그대로입니다."
+
+        let levels = Prefs.MeetingDetail.allCases
+        let popup = NSPopUpButton(frame: NSRect(x: 66, y: 0, width: 150, height: 25))
+        popup.addItems(withTitles: levels.map(\.title))
+        popup.selectItem(at: levels.firstIndex(of: retryDetail) ?? 2)
+        let label = NSTextField(labelWithString: "요약 정도")
+        label.frame = NSRect(x: 0, y: 4, width: 62, height: 18)
+        label.font = .systemFont(ofSize: 12)
+        let box = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 25))
+        box.addSubview(label)
+        box.addSubview(popup)
+        alert.accessoryView = box
+
         alert.addButton(withTitle: "다시 요약")
         alert.addButton(withTitle: "취소")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
+        retryDetail = levels[min(popup.indexOfSelectedItem, levels.count - 1)]
         retrySummary()
     }
 
@@ -234,15 +259,17 @@ struct MeetingResultView: View {
     private func retrySummary() {
         guard !retrying, !document.transcript.isEmpty else { return }
         retrying = true
-        MeetingNotes.summarizeOnly(document.transcript, speakersKnown: document.speakersKnown) { result in
+        MeetingNotes.summarizeOnly(document.transcript, speakersKnown: document.speakersKnown,
+                                   detail: retryDetail) { result in
             DispatchQueue.main.async {
                 retrying = false
                 switch result {
                 case .success(let notes):
                     let previous = document.notes
-                    document.notes = notes
+                    document.notes = MeetingHistoryStore.stripTitleSection(notes)
                     document.summaryFailed = nil
                     lastSummary = notes
+                    document.usedModel = MeetingNotes.lastUsedModel
                     try? notes.write(to: document.notesFile, atomically: true, encoding: .utf8)
                     // 목록의 "할 일 n개"가 옛 숫자로 남으면 안 된다.
                     MeetingHistoryStore.updateTodos(notesPath: document.notesFile.path,
@@ -307,6 +334,10 @@ struct MeetingResultView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(20)
+                    // ⚠️ SwiftUI 의 `Text` 는 기본이 **선택 불가**다. 팝오버 쪽에는 걸어 뒀는데
+                    //    이 창만 빠져서, 회의록을 읽다가 한 대목만 긁어 갈 수가 없었다.
+                    //    복사 버튼은 전체만 준다.
+                    .textSelection(.enabled)
                 }
             }
             HairLine().frame(width: 1).frame(maxHeight: .infinity)
@@ -331,6 +362,18 @@ struct MeetingResultView: View {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(document.notes, forType: .string)
                         flash("회의록을 클립보드에 복사했습니다.")
+                    }
+                }
+                // 어느 AI 가 뽑았는지 보여 준다. AUTO 가 회사를 오가게 되면서
+                // 결과만 보고는 알 수 없어졌다 — 품질이 다르면 원인을 여기서 찾는다.
+                if let used = document.usedModel {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("요약 정보").font(.system(size: 11, weight: .bold)).foregroundColor(.text3)
+                        infoRow("AI", used.label)
+                        infoRow("모델", used.name)
+                        if document.highlightCount > 0 {
+                            infoRow("하이라이트", "\(document.highlightCount)곳")
+                        }
                     }
                 }
                 VStack(alignment: .leading, spacing: 8) {
@@ -369,9 +412,10 @@ struct MeetingResultView: View {
 
     private func infoRow(_ label: String, _ value: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
-            Text(label).font(.system(size: 11.5)).foregroundColor(.text3).frame(width: 34, alignment: .leading)
+            Text(label).font(.system(size: 11.5)).foregroundColor(.text3).frame(width: 52, alignment: .leading)
             Text(value).font(.system(size: 11.5)).foregroundColor(.ink)
                 .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
         }
     }
 
@@ -403,6 +447,7 @@ struct MeetingResultView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(20)
+            .textSelection(.enabled)
         }
     }
 
@@ -452,7 +497,23 @@ enum MarkdownBlock {
                 text = String(text.dropFirst(first.count)).trimmingCharacters(in: .whitespacesAndNewlines)
             }
         }
-        return parseBlocks(text)
+        var blocks = parseBlocks(text)
+        // 제목이 '한 줄 요약' 에서 나온 뒤로, 그 섹션을 그대로 두면 같은 문장이 창에서 두 번 보인다.
+        // 제목으로 쓰인 쪽만 지운다 — 요약이 여러 줄이면 나머지는 남겨야 한다.
+        if let title, blocks.count >= 2,
+           case .heading(let head) = blocks[0], head.contains("한 줄 요약"),
+           case .paragraph(let body) = blocks[1],
+           coversSameSentence(title: title, body: body) {
+            blocks.removeFirst(2)
+        }
+        return blocks
+    }
+
+    /// 제목은 40자에서 `…` 로 잘리므로 글자가 똑같지 않다. 잘린 앞부분이 맞으면 같은 문장으로 본다.
+    private static func coversSameSentence(title: String, body: String) -> Bool {
+        let head = title.hasSuffix("…") ? String(title.dropLast()) : title
+        guard head.count >= 4 else { return false }
+        return body.replacingOccurrences(of: "**", with: "").hasPrefix(head)
     }
 
     private static func parseBlocks(_ text: String) -> [MarkdownBlock] {

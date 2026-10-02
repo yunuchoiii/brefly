@@ -15,6 +15,12 @@ if let i = CommandLine.arguments.firstIndex(of: "--render-previews"), i + 1 < Co
 }
 
 // 진단용: 업데이트 확인만 돌려 본다. 버전을 주면 그 버전이 설치된 것처럼 비교한다.
+// 진단 정보에 말한 내용이 섞이지 않았는지 눈으로 본다. 보내기 전에 확인할 길이 있어야 한다.
+if CommandLine.arguments.contains("--diagnostics") {
+    print(Feedback.diagnostics())
+    exit(0)
+}
+
 if let i = CommandLine.arguments.firstIndex(of: "--check-update") {
     let fake = i + 1 < CommandLine.arguments.count ? CommandLine.arguments[i + 1] : UpdateChecker.currentVersion
     // 콜백이 메인 큐로 오므로 세마포어로 막으면 교착된다. 런루프를 돌리며 기다린다.
@@ -194,9 +200,18 @@ if let i = CommandLine.arguments.firstIndex(of: "--summarize-transcript"), i + 1
         exit(1)
     }
     let known = CommandLine.arguments.contains("--speakers-known")
+    // `--detail 1`~`5` 로 자세함을 바꿔 가며 같은 원문을 돌려 볼 수 있다. 안 주면 설정값이다.
+    let detail = CommandLine.arguments.firstIndex(of: "--detail")
+        .flatMap { $0 + 1 < CommandLine.arguments.count ? Int(CommandLine.arguments[$0 + 1]) : nil }
+        .flatMap { Prefs.MeetingDetail(rawValue: $0) } ?? Prefs.meetingDetail
+    // 모델을 안 부르고 넘어갈 요청문만 보고 싶을 때. 단계별로 무엇이 달라지는지 여기서 본다.
+    if CommandLine.arguments.contains("--show-prompt") {
+        print(MeetingNotes.instruction(detail))
+        exit(0)
+    }
     let done = DispatchSemaphore(value: 0)
-    print("원문 \(text.count)자로 요약 요청 (화자 앎: \(known))")
-    MeetingNotes.summarizeOnly(text, speakersKnown: known) { result in
+    print("원문 \(text.count)자로 요약 요청 (화자 앎: \(known), 요약 정도: \(detail.title))")
+    MeetingNotes.summarizeOnly(text, speakersKnown: known, detail: detail) { result in
         switch result {
         case .success(let notes): print("--- 회의록 ---"); print(notes)
         case .failure(let error): print("FAIL \(error.localizedDescription)")
@@ -325,7 +340,12 @@ if let i = CommandLine.arguments.firstIndex(of: "--whisper"), i + 1 < CommandLin
     } ?? ModelStore.transcriptionModel
     let started = Date()
     do {
-        let segments = try Whisper.transcribe(audio: audio, model: model)
+        // `--lang en` 으로 언어를 바꿔 가며 견줄 수 있다. 안 주면 지금 설정한 인식 언어다.
+        let lang = CommandLine.arguments.firstIndex(of: "--lang").flatMap { j in
+            j + 1 < CommandLine.arguments.count ? CommandLine.arguments[j + 1] : nil
+        } ?? String(Prefs.localeID.prefix(2))
+        print("언어 \(lang)")
+        let segments = try Whisper.transcribe(audio: audio, model: model, language: lang)
         let took = Date().timeIntervalSince(started)
         let text = segments.map(\.text).joined(separator: " ")
         print("OK \(String(format: "%.1f", took))초, 구간 \(segments.count)개, 글자 \(text.count)")
@@ -490,8 +510,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var modelDownloader: ModelDownloader?
     /// 회의록을 멈추라는 표. 1~2분 걸리는 일이라 중간에 그만둘 수 있어야 한다.
     private var meetingCancel: CancelToken?
-    /// 메뉴에 보여 줄 진행 문구. 메뉴를 열었을 때 어디쯤인지 알 수 있어야 한다.
-    private var meetingProgressLine: String?
+    /// 메뉴와 메뉴바에 보여 줄 진행 문구("받아쓰는 중", "요약하는 중"). 어디쯤인지 알 수 있어야 한다.
+    /// ⚠️ 바뀌면 메뉴바를 다시 그려야 한다. 그냥 두면 요약으로 넘어간 것이 안 보인다.
+    private var meetingProgressLine: String? { didSet { updateStatusTitle() } }
     /// 마지막 진행 상태. 팝오버를 닫거나 그 사이 받아쓰기를 하면 회의록 화면이 덮이는데,
     /// 그때 "진행 상황 보기"로 되돌아오려면 들고 있어야 한다.
     private var meetingRun: AppModel.MeetingRun?
@@ -594,8 +615,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         // 단축키를 녹음하는 동안엔 전역 핫키를 풀어 둔다. 같은 조합을 누르면 녹음이 켜져 버린다.
         NotificationCenter.default.addObserver(forName: .breflyHotKeyCaptureBegan, object: nil, queue: .main) { _ in
-            HotKey.unregister()
-            ModifierHotKey.unregister()
+            HotKey.unregisterAll()
+            ModifierHotKey.unregisterAll()
         }
         NotificationCenter.default.addObserver(forName: .breflyHotKeyCaptureEnded, object: nil, queue: .main) { [weak self] _ in
             self?.registerHotKey()
@@ -689,24 +710,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         AudioDucker.restore()
-        HotKey.unregister()
-        ModifierHotKey.unregister()
+        HotKey.unregisterAll()
+        ModifierHotKey.unregisterAll()
         recorder.cancel()
     }
 
     // MARK: 단축키
 
     private func registerHotKey() {
+        HotKey.unregisterAll()
+        ModifierHotKey.unregisterAll()
+        registerDictationHotKey()
+        registerExtraHotKeys()
+    }
+
+    /// 받아쓰기 말고 나머지 셋. 비워 둔 것은 등록하지 않는다.
+    private func registerExtraHotKeys() {
+        let jobs: [(slot: HotKey.Slot, name: String, action: () -> Void)] = [
+            (.inPerson,  "대면 회의",  { [weak self] in self?.startMeetingInPerson() }),
+            (.videoCall, "화상 회의",  { [weak self] in self?.startMeetingVideoCall() }),
+            (.highlight, "하이라이트", { [weak self] in self?.toggleHighlight() }),
+        ]
+        for (slot, name, action) in jobs {
+            guard let combo = Prefs.extraHotKey(slot) else { continue }
+            let wrapped: () -> Void = { Log.write("단축키 눌림 — \(name)"); action() }
+            let ok = combo.isModifierOnly
+                ? ModifierHotKey.register(slot, combo, action: wrapped)
+                : HotKey.register(slot, keyCode: combo.keyCode,
+                                  modifiers: combo.modifiers & 0xFFFF, action: wrapped)
+            Log.write("\(name) 단축키 \(combo.title) 등록: \(ok)")
+        }
+    }
+
+    private func registerDictationHotKey() {
         let combo = Prefs.currentHotKey
         let action: () -> Void = { [weak self] in
             Log.write("단축키 눌림")
             self?.toggle()
         }
-        HotKey.unregister()
-        ModifierHotKey.unregister()
 
         if combo.isModifierOnly {
-            let ok = ModifierHotKey.register(combo, action: action)
+            let ok = ModifierHotKey.register(.dictation, combo, action: action)
             Log.write("수정자 단축키 \(combo.title) 등록: \(ok)")
             if !ok {
                 // 사용자가 이미 권한을 켜 뒀어도 앱이 막 뜬 직후엔 false 로 보인다(번들 ID 가 바뀐 첫 실행에서 14초 걸렸다).
@@ -716,7 +760,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             return
         }
 
-        let ok = HotKey.register(keyCode: combo.keyCode, modifiers: combo.modifiers & 0xFFFF, action: action)
+        let ok = HotKey.register(.dictation, keyCode: combo.keyCode,
+                                 modifiers: combo.modifiers & 0xFFFF, action: action)
         Log.write("단축키 \(combo.title) 등록: \(ok)")
         if !ok {
             fail("단축키 \(combo.title) 등록 실패 — 다른 앱이 이미 쓰고 있을 수 있어요.")
@@ -726,6 +771,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     // MARK: 녹음 토글
 
     @objc private func toggle() {
+        // ⚠️ 회의를 녹음하는 중에는 받아쓰기를 하지 않는다(2026-10-01 결정). 기술로는 되지만
+        //    — 마이크는 서로 간섭하지 않는 것을 쟀다 — 쓰는 사람에게 손해가 크다.
+        //    1) **말한 것이 회의록에도 들어간다.** 회의 마이크는 내내 돌고 있어서, 받아쓰려고
+        //       한 말("여보세요")이 회의 녹음에 그대로 섞인다.
+        //    2) **화상 회의면 상대 목소리가 작아진다.** 받아쓰기는 `AudioDucker` 로 출력 볼륨을
+        //       ×0.3 으로 낮춘다. 회의 중에 그러면 상대 말을 못 듣는다.
+        //    화면이 겹치는 문제(어느 시계를 보여 줄지, 팝오버에 무엇을 띄울지)도 여기서 사라진다.
+        if meetingRecorder != nil, !recorder.isRunning {
+            let message = "회의를 녹음하는 동안에는 받아쓰기를 쓸 수 없어요."
+            setState(state, message: message)
+            showNotice(message)
+            showPopover()
+            return
+        }
         recorder.isRunning ? stopAndPolish() : startRecording()
     }
 
@@ -823,7 +882,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         recorder.cancel()
         AudioDucker.restore()
         recordingStartedAt = nil
-        model.phase = .idle
+        if !restoreMeetingPhaseIfRecording() { model.phase = .idle }
         setState(.idle, message: "취소됨")
         popover.performClose(nil)
         Log.write("녹음 취소")
@@ -951,7 +1010,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func finishQuietly(_ message: String) {
         Log.write("빈 녹음 — \(message) (버퍼 \(recorder.bufferCount)개)")
         partialText = ""
-        model.phase = .idle
+        if !restoreMeetingPhaseIfRecording() { model.phase = .idle }
         setState(.idle, message: message)
         if popover.isShown { popover.performClose(nil) }
     }
@@ -1128,8 +1187,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func showPopover() {
         guard let button = statusItem.button, !popover.isShown else { return }
         // 오래된 결과는 치운다. 기록에서 꺼내 본 것(`resultShownAt` 이 비어 있음)은 그대로 둔다.
-        if case .done = model.phase, let shown = model.resultShownAt,
-           Date().timeIntervalSince(shown) > Self.resultStaleAfter {
+        // ⚠️ 회의를 녹음하는 중이면 그 화면으로 돌아간다. 받아쓰기 결과가 덮고 있으면
+        //    끝내는 버튼이 없어 녹음을 멈출 수가 없다.
+        // ⚠️ 단, 받아쓰기가 **지금 돌고 있으면 건드리지 않는다.** 2026-10-01 에 여기서
+        //    조건 없이 덮었더니, 회의 중 받아쓰기를 하는 24초 동안 파형도 글자도 안 보이고
+        //    회의 화면만 떠서 받아쓰기가 되고 있는지 알 수가 없었다.
+        let dictating = recorder.isRunning || state == .polishing
+        if !dictating, meetingRecorder != nil, let run = meetingRecordingRun {
+            if case .meetingRecording = model.phase {} else {
+                model.phase = .meetingRecording(run)
+                model.resultShownAt = nil
+            }
+        } else if case .done = model.phase, let shown = model.resultShownAt,
+                  Date().timeIntervalSince(shown) > Self.resultStaleAfter {
             model.phase = .idle
             model.resultShownAt = nil
         }
@@ -1231,6 +1301,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         settings.model.actions.listGeminiModels = { [weak self] in self?.listGeminiModels() }
         settings.model.actions.openLog = { [weak self] in self?.openLog() }
         settings.model.actions.showDiagnostics = { [weak self] in self?.showDiagnostics() }
+        settings.model.actions.reportProblem = { [weak self] in self?.reportProblem() }
+        settings.model.actions.clearLog = { [weak self] in self?.clearLog() }
         settings.model.actions.openDictationSettings = { [weak self] in self?.openDictationSettings() }
         settings.model.actions.openAccessibility = { [weak self] in self?.openAccessibility() }
         settings.model.actions.reopenOnboarding = { [weak self] in self?.onboarding.show() }
@@ -1263,6 +1335,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         MeetingWindow.shared.onRenamed = { [weak self] in
             self?.model.meetingHistory = MeetingHistoryStore.load()
         }
+        model.actions.toggleHighlight = { [weak self] in self?.toggleHighlight() }
         model.actions.renameMeeting = { [weak self] record in
             guard let self else { return }
             guard let name = self.askName(title: "회의록 이름 바꾸기",
@@ -1379,6 +1452,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     // MARK: 상태 표시
 
+    /// 녹음 중 팝오버에 알림을 3초 띄운다. 겹쳐 눌러도 마지막 것만 남게 세어 둔다.
+    private var noticeToken = 0
+    private func showNotice(_ message: String, seconds: Double = 3) {
+        noticeToken += 1
+        let token = noticeToken
+        model.notice = message
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            guard let self, self.noticeToken == token else { return }
+            self.model.notice = nil
+        }
+    }
+
     private func setState(_ newState: AppState, message: String) {
         DispatchQueue.main.async {
             self.state = newState
@@ -1427,7 +1512,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                         attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)])
                     return
                 }
-                let label = ring.fraction.map { " \(Int($0 * 100))%" } ?? ""
+                // ⚠️ 퍼센트가 없을 땐 **단계 이름**을 적는다. 요약은 한 번에 답이 와서
+                //    `fraction` 이 nil 인데, 전에는 빈 글자가 돼서 받아쓰기 퍼센트가 100% 까지
+                //    오르다 갑자기 사라졌다. 로고는 계속 돌지만 멈춘 것처럼 보인다.
+                let label: String
+                if let fraction = ring.fraction {
+                    label = " \(Int(fraction * 100))%"
+                } else if let line = self.meetingProgressLine {
+                    label = " " + line
+                } else {
+                    label = ""
+                }
                 let dark = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
                 button.attributedTitle = NSAttributedString(
                     string: label, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .bold),
@@ -1922,12 +2017,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     // MARK: 회의를 지금 녹음하기
 
+    /// 받아쓰기가 **마이크를 잡고 있는 동안**에는 회의 녹음을 시작하지 않는다.
+    /// `toggle()` 의 반대 방향이다 — 한쪽만 막으면 순서를 바꿔 누르는 것으로 그대로 겹친다.
+    /// 정리 중(`.polishing`)은 마이크를 이미 놓았으므로 막지 않는다.
+    private func dictationBlocksMeeting() -> Bool {
+        guard recorder.isRunning else { return false }
+        let message = "회의 녹음은 받아쓰기를 마친 뒤 시작할 수 있어요."
+        setState(state, message: message)
+        showNotice(message)
+        showPopover()
+        return true
+    }
+
+    /// ⚠️ 토글이다. 녹음 중에 다시 누르면 끝낸다 — 시작만 되고 못 끄면 단축키로 갇힌다.
     @objc private func startMeetingInPerson() {
+        if meetingRecorder != nil { stopMeetingRecording(); return }
+        if dictationBlocksMeeting() { return }
         meetingKind = .inPerson
         beginMeetingRecording(captureSystem: false)
     }
 
+    /// ⚠️ 대면과 같이 토글이다. 녹음 중에 다시 누르면 끝낸다.
     @objc private func startMeetingVideoCall() {
+        if meetingRecorder != nil { stopMeetingRecording(); return }
+        if dictationBlocksMeeting() { return }
         // ⚠️ 화면 기록 권한이 없으면 상대 목소리를 못 잡는다. 그냥 시작하면 회의가 끝난 뒤에야
         //    내 말만 남은 걸 알게 된다 — 되돌릴 수 없는 손해다. 먼저 묻는다.
         Task { @MainActor in
@@ -1976,8 +2089,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 return
             }
             let capturing = captureSystem && recorder.systemAudioError == nil
-            self.model.phase = .meetingRecording(AppModel.MeetingRecordingRun(
-                startedAt: Date(), capturingSystem: capturing, inPerson: !captureSystem))
+            let run = AppModel.MeetingRecordingRun(
+                startedAt: Date(), capturingSystem: capturing, inPerson: !captureSystem)
+            // ⚠️ 받아쓰기가 `phase` 를 덮어써도 되돌아올 수 있게 따로 들고 있는다.
+            //    전에는 회의 녹음 중에 받아쓰기를 한 번 하면 **녹음 화면으로 영영 못 돌아갔다** —
+            //    메뉴바 시계는 흐르는데 팝오버에는 끝내는 버튼이 없어 멈출 수가 없었다.
+            self.meetingRecordingRun = run
+            // 어떤 마이크로 담고 있는지 녹음 중에 보여 준다. 끝나고서야 알면 되돌릴 수 없다.
+            self.model.micName = AVCaptureDevice.default(for: .audio)?.localizedName
+            self.model.phase = .meetingRecording(run)
             self.showPopover()
             self.startMeetingLevelTimer(recorder)
             self.meetingRecordingStartedAt = Date()
@@ -2035,29 +2155,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         meetingClockTimer?.invalidate()
         meetingClockTimer = nil
         meetingRecordingStartedAt = nil
-        model.meetingMicLevels = Array(repeating: 0, count: 11)
-        model.meetingSystemLevels = Array(repeating: 0, count: 11)
+        model.meetingMicLevels = Array(repeating: 0, count: AppModel.levelCount)
+        model.meetingSystemLevels = Array(repeating: 0, count: AppModel.levelCount)
         Task { @MainActor in
             let session = await recorder.stop()
             // 버리기로 한 녹음을 디스크에 남겨 두지 않는다. 목소리다.
             if let session { try? FileManager.default.removeItem(at: session.directory) }
             self.meetingRing = nil
+            self.meetingRecordingRun = nil
             if case .meetingRecording = self.model.phase { self.model.phase = .idle }
             self.setState(self.state, message: "회의 녹음을 취소했습니다.")
             Log.write("회의 녹음 취소 — 녹음 파일도 지웠다")
         }
     }
 
+    /// 녹음 중 "여기 중요하다"를 켜고 끈다. 녹음 중이 아니면 알려만 준다.
+    @objc private func toggleHighlight() {
+        guard let recorder = meetingRecorder else {
+            setState(state, message: "회의를 녹음하는 중에만 하이라이트할 수 있습니다.")
+            return
+        }
+        let on = recorder.toggleHighlight()
+        model.highlightOn = on
+        model.highlightStartedAt = on ? Date() : nil
+        model.highlightCount = recorder.highlights.count
+        setState(state, message: on ? "하이라이트 시작 — 다시 누르면 끝납니다."
+                                    : "하이라이트 \(recorder.highlights.count)곳")
+    }
+
     @objc private func stopMeetingRecording() {
         guard let recorder = meetingRecorder else { return }
+        // ⚠️ 끄는 걸 잊은 채 끝내는 일이 잦다. 자동으로 닫고 **그랬다고 알려 준다** —
+        //    조용히 닫으면 어디까지 표시됐는지 알 수 없다.
+        let wasOpen = recorder.closeOpenHighlight()
         meetingRecorder = nil
+        meetingRecordingRun = nil
+        model.highlightStartedAt = nil
         meetingLevelTimer?.invalidate()
         meetingLevelTimer = nil
         meetingClockTimer?.invalidate()
         meetingClockTimer = nil
         meetingRecordingStartedAt = nil
-        model.meetingMicLevels = Array(repeating: 0, count: 11)
-        model.meetingSystemLevels = Array(repeating: 0, count: 11)
+        model.meetingMicLevels = Array(repeating: 0, count: AppModel.levelCount)
+        model.meetingSystemLevels = Array(repeating: 0, count: AppModel.levelCount)
         setState(state, message: "녹음을 마치는 중…")
         Task { @MainActor in
             guard let session = await recorder.stop() else {
@@ -2068,20 +2208,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // 시스템 트랙이 비어 있으면(권한 없음 등) 넘기지 않는다 — 무음을 받아쓰면
             // Whisper 가 없는 말을 지어낸다.
             let system = recorder.systemBuffers > 0 ? session.system : nil
+            if wasOpen {
+                let alert = NSAlert()
+                alert.messageText = "하이라이트를 끄지 않으셨습니다"
+                alert.informativeText = "마지막 하이라이트를 녹음이 끝난 지점까지로 두었습니다.\n"
+                    + "표시한 대목은 \(recorder.highlights.count)곳입니다."
+                alert.addButton(withTitle: "알겠습니다")
+                NSApp.activate(ignoringOtherApps: true)
+                alert.runModal()
+            }
+            self.model.highlightOn = false
+            self.model.highlightCount = 0
             self.makeMeetingNotesFromTracks(mic: session.mic, system: system,
                                             recordedAt: session.startedAt,
-                                            folder: session.directory)
+                                            folder: session.directory,
+                                            highlights: recorder.highlights)
         }
     }
 
-    private func makeMeetingNotesFromTracks(mic: URL, system: URL?, recordedAt: Date, folder: URL) {
+    /// 지금 돌고 있는 회의 녹음 화면. 받아쓰기가 `phase` 를 덮어써도 여기서 되찾는다.
+    private var meetingRecordingRun: AppModel.MeetingRecordingRun?
+
+    /// 받아쓰기가 끝난 뒤 회의 녹음 중이었으면 그 화면으로 돌려놓는다.
+    /// 아무 일도 없었으면 시키는 대로 `.idle` 로 둔다.
+    private func restoreMeetingPhaseIfRecording() -> Bool {
+        guard meetingRecorder != nil, let run = meetingRecordingRun else { return false }
+        model.phase = .meetingRecording(run)
+        return true
+    }
+
+    /// 방금 만든 회의록의 하이라이트 수. 결과 창 "요약 정보"에 보여 준다.
+    private var lastHighlightCount = 0
+
+    private func makeMeetingNotesFromTracks(mic: URL, system: URL?, recordedAt: Date, folder: URL,
+                                            highlights: [(start: Double, end: Double)] = []) {
+        lastHighlightCount = highlights.count
         isMakingMeetingNotes = true
         let cancel = CancelToken()
         meetingCancel = cancel
         var run = AppModel.MeetingRun(fileName: "회의 녹음", audioSeconds: nil, startedAt: Date())
         meetingRun = run
         model.phase = .meeting(run)
-        MeetingNotes.makeFromTracks(mic: mic, system: system, recordedAt: recordedAt, cancel: cancel,
+        MeetingNotes.makeFromTracks(mic: mic, system: system, recordedAt: recordedAt,
+                                    highlights: highlights, cancel: cancel,
                                     onProgress: { [weak self] progress in
             guard let self else { return }
             DispatchQueue.main.async {
@@ -2110,6 +2279,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     self.meetingRing = nil
                     self.setState(self.state, message: error.localizedDescription)
                     Log.write("회의 녹음 회의록 끝남: \(error.localizedDescription)")
+                    // ⚠️ 말이 없던 녹음은 **오류가 아니다.** 기록에 남길 것이 없을 뿐이라
+                    //    알림창을 띄우지 않는다(받아쓰기의 "빈 녹음"과 같은 생각이다).
+                    //    대신 아무 일도 안 일어난 것으로 보이지 않게 팝오버에 적어 준다.
+                    if case MeetingNotes.Failure.noSpeech = error {
+                        self.showNotice(error.localizedDescription, seconds: 8)
+                        self.showPopover()
+                    }
                 }
             }
         })
@@ -2272,7 +2448,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func finishMeetingNotes(_ notes: MeetingNotes.Result, source: URL,
                                     titleOverride: String? = nil) {
         // 직접 녹음한 것은 파일 이름이 "mic" 이라 쓸모가 없다. 폴더 이름(날짜-시각)을 쓴다.
-        let stem = titleOverride ?? source.deletingPathExtension().lastPathComponent
+        // 회의록 내용에서 제목을 뽑는다. `2026-09-30-160033` 로는 나중에 무엇이 무엇인지 모른다.
+        // ⚠️ 요약이 실패했으면(본문이 받아 적은 원문) 뽑지 않는다 — 원문 첫 문장은 제목이 못 된다.
+        let fallbackStem = titleOverride ?? source.deletingPathExtension().lastPathComponent
+        let stem = notes.summaryFailed == nil
+            ? (MeetingHistoryStore.titleFromNotes(notes.notes) ?? fallbackStem)
+            : fallbackStem
+        // 제목은 위에서 뽑았다. 본문에 남겨 두면 창에서도 파일에서도 두 번 보인다.
+        var notes = notes
+        notes.notes = MeetingHistoryStore.stripTitleSection(notes.notes)
         let name = stem + " 회의록.md"
         var target = source.deletingLastPathComponent().appendingPathComponent(name)
         let body = "# " + stem + "\n\n" + notes.notes + "\n"
@@ -2323,7 +2507,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             segments: notes.segments,
             transcript: notes.transcript,
             speakersKnown: notes.segments.contains { $0.speaker != nil },
-            summaryFailed: notes.summaryFailed?.localizedDescription))
+            summaryFailed: notes.summaryFailed?.localizedDescription,
+            usedModel: notes.usedModel,
+            highlightCount: lastHighlightCount))
     }
 
     /// 팝오버를 닫았거나 그 사이 받아쓰기를 해서 회의록 화면이 덮였을 때 되돌아온다.
@@ -2456,6 +2642,81 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(info, forType: .string)
         }
+    }
+
+    /// 개발자에게 문제를 알린다.
+    ///
+    /// ⚠️ **앱이 아무것도 보내지 않는다.** 메일 앱을 열어 주고 보내기는 사용자가 누른다.
+    ///    회의 내용을 다루는 앱이라, 무엇이 나가는지 본인이 보고 지울 수 있어야 한다.
+    @objc private func reportProblem() {
+        let alert = NSAlert()
+        alert.messageText = "문제 알리기"
+        alert.informativeText = "무슨 일이 있었는지 적어 주세요. 버전·권한·설정 같은 진단 정보가 함께 붙습니다.\n"
+            + "진단 정보에는 말한 내용이 들어가지 않습니다."
+
+        let note = NSTextView(frame: NSRect(x: 0, y: 0, width: 420, height: 92))
+        note.font = .systemFont(ofSize: 12)
+        note.isRichText = false
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 34, width: 420, height: 92))
+        scroll.documentView = note
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+
+        // ⚠️ 기본은 꺼 둔다. 로그에는 받아쓴 말과 회의 제목이 그대로 들어 있다.
+        let attach = NSButton(checkboxWithTitle: "최근 로그 150줄도 함께 보내기", target: nil, action: nil)
+        attach.frame = NSRect(x: 0, y: 12, width: 420, height: 18)
+        attach.state = .off
+        let warn = NSTextField(labelWithString: "받아쓴 말과 회의 제목이 들어 있습니다. 보내기 전에 메일에서 확인하세요.")
+        warn.frame = NSRect(x: 18, y: -4, width: 402, height: 16)
+        warn.font = .systemFont(ofSize: 10)
+        warn.textColor = .secondaryLabelColor
+
+        let box = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 126))
+        box.addSubview(scroll); box.addSubview(attach); box.addSubview(warn)
+        alert.accessoryView = box
+        alert.addButton(withTitle: "메일 열기")
+        alert.addButton(withTitle: "취소")
+
+        keepPopoverOpen = true
+        applyPopoverStickiness(for: model.phase)
+        NSApp.activate(ignoringOtherApps: true)
+        alert.window.initialFirstResponder = note
+        let answer = alert.runModal()
+        keepPopoverOpen = false
+        applyPopoverStickiness(for: model.phase)
+        guard answer == .alertFirstButtonReturn else { return }
+
+        let said = note.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        var body = (said.isEmpty ? "(무슨 일이 있었는지 적어 주세요)" : said)
+            + "\n\n" + Feedback.diagnostics()
+        if attach.state == .on {
+            body += "\n\n[최근 로그 150줄]\n" + Feedback.logTail()
+        }
+        let viaClipboard = Feedback.compose(summary: said, body: body)
+        Log.write("문제 알리기 — 메일 열기 (로그 첨부 \(attach.state == .on), 클립보드 경유 \(viaClipboard))")
+        if viaClipboard {
+            setState(state, message: "메일을 열었습니다. 본문에 붙여넣기(⌘V) 해 주세요.")
+            showNotice("메일 본문에 붙여넣기(⌘V) 해 주세요. 보내기 전에 확인하실 수 있습니다.", seconds: 8)
+        } else {
+            setState(state, message: "메일을 열었습니다. 보내기 전에 내용을 확인해 주세요.")
+        }
+    }
+
+    /// 로그를 비운다. 받아쓴 말이 쌓이는 곳이라 치울 길이 있어야 한다.
+    @objc private func clearLog() {
+        let alert = NSAlert()
+        alert.messageText = "로그를 지울까요?"
+        let bytes = (try? FileManager.default.attributesOfItem(atPath: Log.url.path)[.size] as? Int) ?? nil
+        let size = bytes.map { ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) } ?? "?"
+        alert.informativeText = "지금까지 쌓인 기록(\(size))을 비웁니다. 되돌릴 수 없습니다. "
+            + "앱 설정과 받아쓰기 기록은 그대로입니다."
+        alert.addButton(withTitle: "지우기")
+        alert.addButton(withTitle: "취소")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        try? "".write(to: Log.url, atomically: true, encoding: .utf8)
+        Log.write("=== 로그를 지웠습니다 ===")
+        setState(state, message: "로그를 비웠습니다.")
     }
 
     /// macOS 받아쓰기가 꺼져 있으면 어떤 인식 방식도 동작하지 않는다.

@@ -848,12 +848,17 @@ private struct ModelStep: View {
                 if model.keyVerified {
                     GreenBox("\(Prefs.geminiModel) 로 연결됐습니다 · 요약을 정리할 준비가 됐어요")
                 } else {
-                    HStack(spacing: 6) {
-                        Text("카드 등록 없이 무료입니다 ·").font(.system(size: 12)).foregroundColor(.text4)
-                        Button(action: { if let u = URL(string: "https://aistudio.google.com/apikey") { NSWorkspace.shared.open(u) } }) {
-                            Text("발급 페이지 열기").font(.system(size: 12, weight: .semibold)).foregroundColor(.ink).underline()
-                        }.buttonStyle(.plain)
-                        Spacer()
+                    // ⚠️ 여기만 밑줄 친 회색 글자였다. 좌우가 전부 회색 설명이라 그 사이에서
+                    //    **누를 것으로 안 보였다.** 아래 갈래(`helpBox`)는 검은 버튼인데 짝이 안 맞았다.
+                    //    같은 버튼으로 맞춘다.
+                    HStack(spacing: 10) {
+                        WizardButton("발급 페이지 열기", style: .primary, small: true) {
+                            if let u = URL(string: "https://aistudio.google.com/apikey") {
+                                NSWorkspace.shared.open(u)
+                            }
+                        }
+                        Text("카드 등록 없이 무료입니다").font(.system(size: 12)).foregroundColor(.text4)
+                        Spacer(minLength: 8)
                         Text("나중에 하면 원문만 복사됩니다.").font(.system(size: 12)).foregroundColor(.text4)
                     }
                 }
