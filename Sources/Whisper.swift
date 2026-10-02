@@ -61,8 +61,29 @@ enum Whisper {
     ///    창마다 낱말 목록을 밀어 넣으면 앞뒤 문맥을 잃고, 첫 창에만 넣어도 전체가 흔들렸다.
     ///    용어 교정은 받아쓴 **뒤에** `Glossary.apply` 로 한다 — 그쪽은 실측으로 다 통했다.
     /// - Parameter onProgress: 0~1. 회의록은 1~2분이 걸려서 진행률이 없으면 멈춘 줄 안다.
+    /// 디코더가 같은 문장에 갇히지 않게 하는 손잡이들. 기본값은 실측으로 정한다(`--whisper` 로 A/B).
+    struct Guards {
+        /// 앞 구간의 글을 다음 구간의 힌트로 넘길지. `true` 면 **안 넘긴다.**
+        var noContext: Bool
+        /// 결과가 망가져 보일 때 온도를 올려 다시 뽑는 폭. 0 이면 다시 뽑지 않는다.
+        var temperatureInc: Float
+        /// 글자 분포가 이보다 단조로우면(= 같은 말 반복) 다시 뽑는다.
+        var entropyThreshold: Float
+        /// ⚠️ **whisper.cpp 기본값 그대로다.** 바꿔 보고 되돌렸다(2026-10-02 실측, `--whisper` A/B).
+        ///
+        ///     no_context = true        효과 **0** — 두 트랙 모두 바이트까지 같은 결과
+        ///     temp_inc .4 / entropy 2.8  면접 마이크 되풀이 26% → 1%  (좋아짐)
+        ///                                유튜브 시스템 되풀이 22% → 49% (나빠짐)
+        ///
+        /// 온도를 올려 다시 뽑으면 **다른 환청**이 나올 뿐이라 트랙에 따라 복불복이다.
+        /// 되풀이는 디코더를 돌려 고치지 않고 `collapseRuns` 가 뒤에서 걷어낸다.
+        static let `default` = Guards(noContext: false, temperatureInc: 0.2, entropyThreshold: 2.4)
+        static let legacy = Guards(noContext: false, temperatureInc: 0.2, entropyThreshold: 2.4)
+    }
+
     static func transcribe(audio: URL, model: URL, language: String = "ko",
                            threads: Int32 = 8,
+                           guards: Guards = .default,
                            cancel: CancelToken? = nil,
                            onProgress: ((Double) -> Void)? = nil) throws -> [Segment] {
         guard FileManager.default.fileExists(atPath: model.path) else { throw Failure.modelMissing(model) }
@@ -86,6 +107,14 @@ enum Whisper {
         params.n_threads = threads
         // 진행 표시를 끄지 않으면 whisper.cpp 가 stderr 로 줄줄이 찍는다.
         params.no_timestamps = false
+
+        // ⚠️ **같은 문장이 수백 번 반복되는 것**을 막는 손잡이들이다. 2026-10-02 실측에서
+        //    16,675자짜리 회의록에 같은 줄이 251번 들어 있었다. 유튜브처럼 말이 아닌 소리가
+        //    섞이면 디코더가 한 문장에 갇히고, 기본값은 앞 구간의 글을 다음 구간 힌트로
+        //    넘기기 때문에(`no_context = false`) 한 번 갇히면 끝까지 끌고 간다.
+        params.no_context = guards.noContext
+        params.temperature_inc = guards.temperatureInc
+        params.entropy_thold = guards.entropyThreshold
 
         // 멈추라는 표를 C 쪽에 넘긴다. whisper 는 창을 하나 끝낼 때마다 물어본다.
         if let cancel {
@@ -126,8 +155,35 @@ enum Whisper {
                                         start: Double(whisper_full_get_segment_t0(context, i)) / 100,
                                         end: Double(whisper_full_get_segment_t1(context, i)) / 100))
             }
-            return segments
+            return collapseRuns(segments)
         }
+    }
+
+    /// 같은 말이 **연달아** 쏟아지는 것을 걷어낸다.
+    ///
+    /// whisper 는 말이 아닌 소리(음악·유튜브)나 긴 침묵에서 한 문장에 갇혀 수백 번을 쏟는다.
+    /// 2026-10-02 실측 — 실제 회의 녹음에서 나온 것들이다.
+    ///
+    ///     "상대: 한 번에 있던 학생들은"   251회   (유튜브를 틀어 둔 화상 면접)
+    ///     "아, 혈압이 너무 올라가서."     242회
+    ///     "나: -끝났습니다."             101회
+    ///
+    /// ⚠️ **연달아 나올 때만** 버린다. 흩어져 나오는 "네."·"맞아요" 는 진짜 대답이다 —
+    ///    같은 녹음에서 11번 흩어져 나온 "네." 는 그대로 남는 것을 확인했다.
+    /// ⚠️ 하나는 남긴다. 통째로 지우면 그 자리에 무슨 소리가 있었는지조차 사라진다.
+    static func collapseRuns(_ segments: [Segment], keep: Int = 2) -> [Segment] {
+        var out: [Segment] = []
+        var run = 0
+        var last: String?
+        for s in segments {
+            let key = s.text.filter { !$0.isWhitespace && !$0.isPunctuation }
+            if key == last { run += 1 } else { run = 1; last = key }
+            if run <= keep { out.append(s) }
+        }
+        if out.count < segments.count {
+            Log.write("되풀이 걷어냄 — 구간 \(segments.count)개 → \(out.count)개")
+        }
+        return out
     }
 
     /// 어떤 소리 파일이든 16kHz 모노 실수 배열로 만든다. 이미 그 형식이면 그대로 읽는다.

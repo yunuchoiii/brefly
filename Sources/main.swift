@@ -345,7 +345,18 @@ if let i = CommandLine.arguments.firstIndex(of: "--whisper"), i + 1 < CommandLin
             j + 1 < CommandLine.arguments.count ? CommandLine.arguments[j + 1] : nil
         } ?? String(Prefs.localeID.prefix(2))
         print("언어 \(lang)")
-        let segments = try Whisper.transcribe(audio: audio, model: model, language: lang)
+        // 손잡이를 하나씩 켜 가며 견준다 — 셋을 한꺼번에 바꾸면 무엇이 효과였는지 모른다.
+        func num(_ flag: String) -> Float? {
+            CommandLine.arguments.firstIndex(of: flag).flatMap {
+                $0 + 1 < CommandLine.arguments.count ? Float(CommandLine.arguments[$0 + 1]) : nil
+            }
+        }
+        var guards = Whisper.Guards.legacy
+        if CommandLine.arguments.contains("--no-context") { guards.noContext = true }
+        if let t = num("--temp-inc") { guards.temperatureInc = t }
+        if let e = num("--entropy") { guards.entropyThreshold = e }
+        print("손잡이: no_context=\(guards.noContext) temp_inc=\(guards.temperatureInc) entropy=\(guards.entropyThreshold)")
+        let segments = try Whisper.transcribe(audio: audio, model: model, language: lang, guards: guards)
         let took = Date().timeIntervalSince(started)
         let text = segments.map(\.text).joined(separator: " ")
         print("OK \(String(format: "%.1f", took))초, 구간 \(segments.count)개, 글자 \(text.count)")
