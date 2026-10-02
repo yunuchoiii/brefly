@@ -1163,9 +1163,18 @@ struct SlotHotKeyField: View {
             }
             .buttonStyle(.plain)
             .help(recording ? "Esc 로 취소 · 수정자 키만 눌렀다 떼도 저장됩니다." : "클릭해서 바꾸기")
+            // ⚠️ 글자('지우기')가 아니라 휴지통이다. 파란 링크 글자는 '열기' 같은 **가는 길**로
+            //    읽히는데 이건 **없애는 일**이다. 빨간 휴지통이면 누르기 전에 한 번 멈칫한다.
             if combo != nil, !recording {
-                Button("지우기") { Prefs.setExtraHotKey(nil, for: slot); model.bumpHotKeys() }
-                    .buttonStyle(.link).font(.system(size: 11))
+                Button(action: { Prefs.setExtraHotKey(nil, for: slot); model.bumpHotKeys() }) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.coral)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("이 단축키를 지웁니다")
             }
         }
         .fixedSize()
@@ -1326,9 +1335,27 @@ struct HotKeyRecorderField: View {
 /// 체크한 분야의 설명과 용어가 정리 프롬프트에 들어간다. 프롬프트에 특정 직군 용어를 박아 두지 않기 위한 장치.
 struct UsageContextSection: View {
     @ObservedObject var model: SettingsModel
-    @State private var showExtras = false
+    /// 접힌 '직접 추가'를 펼친 채로 그린다. 시안으로 그 안을 확인하려고 둔다 —
+    /// 접혀 있으면 `--render-previews` 가 안쪽을 영영 못 찍는다.
+    var startExpanded = false
+    @State private var showExtras: Bool
+
+    init(model: SettingsModel, startExpanded: Bool = false) {
+        self.model = model
+        self.startExpanded = startExpanded
+        _showExtras = State(initialValue: startExpanded)
+    }
 
     private let columns = [GridItem(.flexible()), GridItem(.flexible())]
+
+    /// 적는 꼴과 그것이 하는 일을 한 줄로. 꼴 쪽 너비를 못 박아 설명이 세로로 맞게 한다.
+    private func glossaryExample(_ form: String, _ what: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(form).font(.system(size: 11, design: .monospaced)).foregroundColor(.text2)
+                .frame(width: 136, alignment: .leading)
+            Text(what)
+        }
+    }
 
     var body: some View {
         SettingsSection("주로 어디에 쓰나요?") {
@@ -1347,7 +1374,7 @@ struct UsageContextSection: View {
                     // ⚠️ 설명이 처음 쓰는 사람에게만 떴다. 나머지는 칩만 보고 무엇에 쓰는지 몰랐다.
                     //    ⚠️ 이 설정은 **회의록에도 걸린다**(`Glossary.apply`). 받아쓰기 탭에 있어서
                     //       받아쓰기 전용으로 읽히므로 여기 적어 둔다.
-                    Text("골라 둔 분야의 용어를 잘못 들어도 바로잡습니다. 회의록에도 적용됩니다.")
+                    Text("받아쓰기와 회의록에 모두 적용됩니다. 여러 개 고를 수 있습니다.")
                         .font(.system(size: 11)).foregroundColor(.text3)
                 }
 
@@ -1404,8 +1431,18 @@ struct UsageContextSection: View {
                     }
                     VStack(alignment: .leading, spacing: 4) {
                         Text("추가 용어 (선택)").font(.system(size: 12, weight: .semibold)).foregroundColor(.ink)
-                        Text("한 줄에 하나씩 적습니다. \"잘못 들린 말 → 올바른 표기\" 또는 단어만 적어도 됩니다. 예) 에스씨에스엠 → SCSM")
-                            .font(.system(size: 11)).foregroundColor(.text3)
+                        // ⚠️ 두 형식이 하는 일이 **다르다.** 화살표는 받아 적은 뒤 글자를 바꾸고
+                        //    (`Glossary.apply`, 받아쓰기·회의록 둘 다), 단어만 적은 것은 인식기에
+                        //    미리 알려 주기만 한다(`contextualStrings`, 받아쓰기만 — whisper 에는
+                        //    일부러 안 넘긴다, `Whisper.swift:54`). 전에는 "또는 단어만 적어도
+                        //    됩니다"로만 적어 둬서 무엇이 달라지는지 알 수 없었다.
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("한 줄에 하나씩 적습니다.")
+                            glossaryExample("에스씨에스엠 → SCSM", "잘못 들린 말을 올바른 표기로 바꿉니다")
+                            glossaryExample("SCSM", "이런 말이 나올 수 있다고 미리 알려 줍니다 (받아쓰기만)")
+                            Text("잘못 들린 적이 있으면 화살표로, 아직 없으면 단어만 적습니다.")
+                        }
+                        .font(.system(size: 11)).foregroundColor(.text3)
                         TextEditor(text: $model.glossary)
                             .font(.system(size: 12, design: .monospaced)).frame(height: 90)
                             .padding(6).background(Color.fill).cornerRadius(7)

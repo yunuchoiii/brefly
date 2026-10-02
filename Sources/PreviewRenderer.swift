@@ -237,6 +237,8 @@ enum PreviewRenderer {
                   to: dir.appendingPathComponent("2-settings-\(name)-full.png"))
         }
         full("general", GeneralPane(model: settings))
+        // '직접 추가'를 펼친 모습. 접혀 있으면 안쪽 설명을 확인할 길이 없다.
+        full("usage-expanded", UsageContextSection(model: settings, startExpanded: true))
         full("dictation", DictationPane(model: settings))
         full("meeting", MeetingPane(model: settings))
         full("ai", AIPane(model: settings))
