@@ -1502,6 +1502,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // 회의록이 도는 동안은 그쪽 진행률이 이긴다. 받아쓰기 상태보다 오래 걸려서
             // 지금 무엇이 돌고 있는지 알려 주는 쪽이 더 쓸모 있다.
             if let ring = self.meetingRing {
+                // ⚠️ **받아쓰기가 돌고 있으면 글자는 그쪽이 갖는다.** 회의록 요약 퍼센트와
+                //    받아쓰기 빨간 점이 한 자리를 다투면, 받아쓰기 타이머(0.25초)와 요약 진행
+                //    콜백이 번갈아 덮어써서 메뉴바가 깜빡인다(2026-10-02).
+                //    회의록이 돌고 있다는 것은 **로고 고리가 계속 도는 것**으로 알린다 —
+                //    글자까지 둘이 나눠 가질 자리가 없다.
+                //    (회의 *녹음* 중에는 받아쓰기 자체가 막혀 있어 이 가지에 안 걸린다.)
+                if self.state == .recording { self.renderRecordingTitle(); return }
                 // 녹음 중 시계는 받아쓰기 쪽과 같은 모양이다. ⚠️ 색을 지정하지 않는다 —
                 // 메뉴바 글자는 시스템이 밝기에 맞춰 칠해 준다. 직접 칠하면 밝은 메뉴바에서 안 보인다.
                 if case .recording = ring.kind, let started = self.meetingRecordingStartedAt {
