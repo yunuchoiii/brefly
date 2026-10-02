@@ -1002,6 +1002,13 @@ struct MeetingRecordingView: View {
                     .padding(.horizontal, 16).padding(.top, 4)
             }
 
+            // ⚠️ 한참째 소리가 안 들어온다. **녹음을 멈추지 않는다** — 알리기만 하고 판단은 맡긴다.
+            //    잘못된 마이크로 회의 하나를 통째로 날리는 것을 녹음 중에 알아채라는 줄이다.
+            if model.meetingSilent {
+                NoticeBox("3분째 소리가 들어오지 않습니다. 마이크가 맞는지 확인해 주세요.")
+                    .padding(.horizontal, 12).padding(.top, 4)
+            }
+
             if let notice = model.notice {
                 NoticeBox(notice).padding(.horizontal, 12).padding(.top, 4)
             }

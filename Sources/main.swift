@@ -1193,11 +1193,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         //    조건 없이 덮었더니, 회의 중 받아쓰기를 하는 24초 동안 파형도 글자도 안 보이고
         //    회의 화면만 떠서 받아쓰기가 되고 있는지 알 수가 없었다.
         let dictating = recorder.isRunning || state == .polishing
-        if !dictating, meetingRecorder != nil, let run = meetingRecordingRun {
-            if case .meetingRecording = model.phase {} else {
-                model.phase = .meetingRecording(run)
-                model.resultShownAt = nil
-            }
+        // 녹음 중이든 요약 중이든, 회의록이 돌고 있으면 그 화면을 보여 준다.
+        if !dictating, isMeetingBusy, !isShowingMeetingPhase {
+            _ = restoreMeetingPhaseIfRecording()
+            model.resultShownAt = nil
         } else if case .done = model.phase, let shown = model.resultShownAt,
                   Date().timeIntervalSince(shown) > Self.resultStaleAfter {
             model.phase = .idle
@@ -1507,8 +1506,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 // 메뉴바 글자는 시스템이 밝기에 맞춰 칠해 준다. 직접 칠하면 밝은 메뉴바에서 안 보인다.
                 if case .recording = ring.kind, let started = self.meetingRecordingStartedAt {
                     let seconds = Int(Date().timeIntervalSince(started))
+                    // 팝오버가 닫혀 있어도 보여야 한다 — 창을 닫아도 녹음은 계속되기 때문이다.
+                    let mark = self.model.meetingSilent ? " ⚠︎" : ""
                     button.attributedTitle = NSAttributedString(
-                        string: String(format: " 회의 %d:%02d", seconds / 60, seconds % 60),
+                        string: String(format: " 회의 %d:%02d", seconds / 60, seconds % 60) + mark,
                         attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)])
                     return
                 }
@@ -2099,6 +2100,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             self.model.micName = AVCaptureDevice.default(for: .audio)?.localizedName
             self.model.phase = .meetingRecording(run)
             self.showPopover()
+            self.meetingLastSound = Date()
+            self.meetingSilenceShown = false
+            self.model.meetingSilent = false
             self.startMeetingLevelTimer(recorder)
             self.meetingRecordingStartedAt = Date()
             self.meetingClockTimer?.invalidate()
@@ -2124,7 +2128,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             self.model.meetingMicLevels.removeLast()
             self.model.meetingSystemLevels.insert(level.system, at: 0)
             self.model.meetingSystemLevels.removeLast()
+            self.noteMeetingSilence(max(level.mic, level.system))
         }
+    }
+
+    /// 소리가 들어오고 있다고 볼 최소 크기(0~1). 실측으로 정했다(2026-10-02).
+    ///
+    ///     조용한 녹음(말 없음)  중앙 0.000 · 0.1초 창의 99.7% 가 0.10 미만
+    ///     진짜 회의 177초      중앙 0.258 · 0.1초 창의  0.1% 만 0.10 미만
+    ///
+    /// ⚠️ 0.20 까지 올리면 진짜 회의의 17.6% 가 걸린다. 오탐이 한 번 나면 그다음부터
+    ///    회의 중에 이 앱을 켜지 않게 되므로, 넉넉히 낮춰 잡는다.
+    private static let meetingSilenceLevel: Float = 0.10
+    /// 이만큼 이어지면 알린다. 1분은 대면 회의에서 자료를 같이 보는 시간에 걸리고,
+    /// 5분이면 잘못된 마이크로 5분을 날린다.
+    private static let meetingSilenceSeconds: TimeInterval = 180
+
+    /// 소리가 마지막으로 들어온 때. 녹음을 시작할 때 채운다.
+    private var meetingLastSound: Date?
+    /// 지금 "소리가 안 들어온다"를 띄워 둔 상태인가. 소리가 돌아오면 지운다.
+    private var meetingSilenceShown = false
+
+    /// ⚠️ 녹음을 멈추지도, 확인 창을 띄우지도 않는다. 화상 회의 중에 모달이 뜨면 포커스를
+    ///    뺏고 화면 공유에도 보인다. 그리고 "확인"을 눌러야 이어진다면 자리를 비운 사이
+    ///    녹음이 멈춰 버려서, 막으려던 사고를 오히려 만든다. 알리기만 한다.
+    private func noteMeetingSilence(_ level: Float) {
+        guard meetingRecorder != nil else { return }
+        if level >= Self.meetingSilenceLevel {
+            meetingLastSound = Date()
+            if meetingSilenceShown {
+                meetingSilenceShown = false
+                model.meetingSilent = false
+                updateStatusTitle()
+                Log.write("회의 녹음 — 소리가 다시 들어옴")
+            }
+            return
+        }
+        guard !meetingSilenceShown,
+              let since = meetingLastSound,
+              Date().timeIntervalSince(since) >= Self.meetingSilenceSeconds else { return }
+        meetingSilenceShown = true
+        model.meetingSilent = true
+        updateStatusTitle()
+        Log.write("회의 녹음 — \(Int(Self.meetingSilenceSeconds / 60))분째 소리가 안 들어온다")
     }
 
     /// 녹음을 버린다. 받아쓰기에도 취소가 있는데 회의 녹음에만 없으면 잘못 시작했을 때 갇힌다.
@@ -2191,6 +2237,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         meetingRecorder = nil
         meetingRecordingRun = nil
         model.highlightStartedAt = nil
+        meetingSilenceShown = false
+        model.meetingSilent = false
         meetingLevelTimer?.invalidate()
         meetingLevelTimer = nil
         meetingClockTimer?.invalidate()
@@ -2232,9 +2280,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// 받아쓰기가 끝난 뒤 회의 녹음 중이었으면 그 화면으로 돌려놓는다.
     /// 아무 일도 없었으면 시키는 대로 `.idle` 로 둔다.
     private func restoreMeetingPhaseIfRecording() -> Bool {
-        guard meetingRecorder != nil, let run = meetingRecordingRun else { return false }
-        model.phase = .meetingRecording(run)
-        return true
+        if meetingRecorder != nil, let run = meetingRecordingRun {
+            model.phase = .meetingRecording(run)
+            return true
+        }
+        // ⚠️ **요약 중도 되돌린다.** 녹음은 끝났지만 1~2분 걸리는 일이 돌고 있다. 2026-10-02 에
+        //    녹음 쪽만 챙기고 이쪽을 빠뜨려서, 요약 중에 받아쓰기를 한 번 하면 그다음부터
+        //    대기 화면이 떴다 — 메뉴바에는 95% 가 도는데 팝오버에는 아무 말이 없었다.
+        if isMakingMeetingNotes, let run = meetingRun {
+            model.phase = .meeting(run)
+            return true
+        }
+        return false
+    }
+
+    /// 회의록이 무언가 하고 있는가 — 녹음 중이거나 요약 중. 둘 다 팝오버가 보여 줘야 할 상태다.
+    private var isMeetingBusy: Bool {
+        (meetingRecorder != nil && meetingRecordingRun != nil) || (isMakingMeetingNotes && meetingRun != nil)
+    }
+
+    /// 지금 팝오버가 이미 그 화면을 보여 주고 있는가.
+    private var isShowingMeetingPhase: Bool {
+        switch model.phase {
+        case .meetingRecording, .meeting: return true
+        default: return false
+        }
     }
 
     /// 방금 만든 회의록의 하이라이트 수. 결과 창 "요약 정보"에 보여 준다.

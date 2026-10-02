@@ -87,6 +87,9 @@ final class AppModel: ObservableObject {
     /// 지금 켜 둔 하이라이트가 시작한 시각. 켜져 있는 동안 구간 길이를 보여 준다.
     @Published var highlightStartedAt: Date?
 
+    /// 회의를 녹음하는데 한참째 소리가 안 들어온다. 녹음은 그대로 돌고, 알리기만 한다.
+    @Published var meetingSilent = false
+
     @Published var highlightOn = false
     /// 이번 녹음에서 표시한 대목 수.
     @Published var highlightCount = 0

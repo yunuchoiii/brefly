@@ -142,6 +142,10 @@ enum PreviewRenderer {
         model.highlightOn = false
         model.highlightStartedAt = nil
         model.highlightCount = 0
+        // 한참째 소리가 안 들어오는 모습. 녹음은 그대로 돌고 있어야 한다.
+        model.meetingSilent = true
+        snap("1e-meeting-recording-silent")
+        model.meetingSilent = false
 
         model.retryRecord = samples[0]
         model.phase = .error("정리에 실패해서 원문을 그대로 복사했어요\n\n"
