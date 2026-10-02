@@ -48,8 +48,12 @@ struct IdleView: View {
                 LogoMark(size: 26)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Brefly").font(.system(size: 15, weight: .bold)).foregroundColor(.ink)
-                    Text(model.micReady ? "대기 중 · 마이크 준비됨" : "마이크 권한이 필요해요.")
-                        .font(.system(size: 12)).foregroundColor(.text2)
+                    // 방금 무슨 일이 있었는지가 "대기 중"보다 중요하다. 잠깐 자리를 내준다.
+                    Text(model.notice ?? (model.micReady ? "대기 중 · 마이크 준비됨"
+                                                         : "마이크 권한이 필요해요."))
+                        .font(.system(size: 12, weight: model.notice == nil ? .regular : .semibold))
+                        .foregroundColor(model.notice == nil ? .text2 : .coral)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
                 Circle().fill(model.micReady ? Color.green : Color.coral).frame(width: 8, height: 8)
@@ -236,91 +240,208 @@ struct HistoryRow: View {
 
 // MARK: - 1b 녹음 중
 
+/// 받아쓰기 녹음 팝오버. 시안 `녹음 팝업 개선.dc.html` 의 **1d**(2026-10-01).
+///
+/// 전에는 받아쓴 말을 **빈 입력 상자 모양**의 칸에 넣어 보여 줬다. 말이 주인공인 화면인데
+/// 상자가 더 눈에 띄었고, 파형·버튼·안내 문구가 세로로 쌓여 팝오버가 길었다.
+/// 1d 는 상자를 없애고 글씨를 키워 문장을 앞세운다. 파형과 '요약'은 한 줄에 놓고,
+/// '취소'와 안내는 하단 바로 내린다 — 취소는 눌러서 좋을 일이 없으니 손이 덜 가는 자리로 뺀다.
 struct RecordingView: View {
     @ObservedObject var model: AppModel
+    /// 글자 깜빡이. 0.55초마다 뒤집는다.
+    @State private var caretOn = true
+    private let blink = Timer.publish(every: 0.55, on: .main, in: .common).autoconnect()
 
-    /// 시안처럼 마지막 부분만 보이게 앞을 잘라낸다.
+    /// 마지막 부분만 보이게 앞을 잘라낸다.
+    /// ⚠️ 글씨가 13pt → 17pt 로 커지면서 95자는 여섯 줄이 됐다(팝오버가 500pt 가까이 길어졌다).
+    ///    340pt 폭에서 네 줄에 들어가는 길이로 줄인다. 방금 한 말이 보이면 되는 화면이다.
     private var tail: String {
         let text = model.partialText
-        let limit = 95
+        let limit = 70
         guard text.count > limit else { return text }
         return "…" + text.suffix(limit)
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                ZStack {
-                    Circle().fill(Color.coral.opacity(0.22)).frame(width: 20, height: 20)
-                    Circle().fill(Color.coral).frame(width: 10, height: 10)
+            VStack(alignment: .leading, spacing: 12) {
+                // 무엇이 돌고 있는지와 얼마나 됐는지. 한 줄로 낮춰 둔다 — 주인공은 아래 문장이다.
+                HStack(spacing: 7) {
+                    Circle().fill(Color.coral).frame(width: 7, height: 7)
+                    Text("받아쓰기")
+                    Text(Format.timer(model.elapsed)).monospacedDigit()
                 }
-                Text("듣고 있어요").font(.system(size: 14, weight: .semibold)).foregroundColor(.white)
-                Spacer()
-                Text(Format.timer(model.elapsed))
-                    .font(.system(size: 13, weight: .medium).monospacedDigit())
-                    .foregroundColor(.darkSub)
-            }
-            .padding(.horizontal, 16).padding(.top, 16)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.darkSub)
 
-            Waveform(levels: model.levels)
-                .frame(height: 44)
-                .padding(.top, 14).padding(.bottom, 12)
-
-            HStack(alignment: .bottom, spacing: 0) {
-                (Text(model.partialText.isEmpty ? "말씀하세요…" : tail)
-                    .foregroundColor(model.partialText.isEmpty ? .darkMuted : .darkText)
-                 + Text(" ▍").foregroundColor(.darkMuted))
-                    .font(.system(size: 13))
-                    .lineSpacing(3)
+                // ⚠️ 시안은 확정된 말을 흰색, 아직 인식 중인 말을 회색으로 나눠 그렸다.
+                //    그렇게 하지 않았다 — 인식기가 주는 것은 통째 한 덩어리라 어디까지가 확정인지
+                //    알 수 없다. 모르는 것을 색으로 아는 척하면 틀린 정보를 주는 것이다.
+                (Text(model.partialText.isEmpty ? "말씀하세요" : tail)
+                    .foregroundColor(model.partialText.isEmpty ? .darkHint : .darkTextMain)
+                 + Text("▌").foregroundColor(caretOn ? .coral : .clear))
+                    .font(.system(size: 17, weight: .medium))
+                    .lineSpacing(4)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .frame(minHeight: 70, alignment: .topLeading)
+                    .frame(minHeight: 80, alignment: .topLeading)
                     .animation(nil, value: model.partialText)
-            }
-            .padding(12)
-            .background(Color.darkCard)
-            .cornerRadius(10)
-            .padding(.horizontal, 16)
 
-            HStack(spacing: 8) {
-                Button(action: model.actions.finishRecording) {
-                    Text("완료 — 요약하기").font(.system(size: 14, weight: .semibold))
+                if let notice = model.notice { NoticeBox(notice) }
+
+                HStack(spacing: 18) {
+                    // 막대 최대 높이를 옆 '요약' 버튼과 같은 32pt 로 맞춘다. 한 줄에 나란히
+                    // 놓인 둘의 높이가 어긋나면 줄이 기울어 보인다.
+                    Waveform(levels: model.levels, width: 3, spacing: 3, height: 32,
+                             fillsWidth: true)
+                        .frame(height: 32)
+                    Button(action: model.actions.finishRecording) {
+                        HStack(spacing: 8) {
+                            Text("요약").font(.system(size: 13, weight: .bold))
+                            CoralKeyCap(model.hotKeyTitle)
+                        }
                         .foregroundColor(.white)
-                        .frame(maxWidth: .infinity).frame(height: 42)
-                        .background(Color.coral).cornerRadius(10)
+                        .padding(.leading, 14).padding(.trailing, 12)
+                        .frame(height: 32)
+                        .background(Color.coral)
+                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
-                Button(action: model.actions.cancelRecording) {
-                    Text("취소").font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.darkText)
-                        .frame(width: 56, height: 42)
-                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.darkLine, lineWidth: 1))
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
             }
-            .padding(16)
+            .padding(.horizontal, 16).padding(.vertical, 14)
 
-            Text(model.autoStop ? "말을 멈추고 \(Int(Prefs.silenceSeconds))초가 지나면 자동으로 요약됩니다"
-                                : "\(model.hotKeyTitle) 를 다시 누르면 요약됩니다")
-                .font(.system(size: 11)).foregroundColor(.darkSub)
-                .padding(.bottom, 14)
+            PopoverBottomBar(hint: bottomHint, action: "취소",
+                             perform: model.actions.cancelRecording)
         }
-        .background(Color.inkFixed)
+        .background(Color.darkPanel)
+        .onReceive(blink) { _ in caretOn.toggle() }
+    }
+
+    private var bottomHint: String {
+        model.autoStop ? "말을 멈추고 \(Int(Prefs.silenceSeconds))초가 지나면 자동으로 요약돼요"
+                       : "\(model.hotKeyTitle)을 다시 누르면 요약돼요"
     }
 }
 
-struct Waveform: View {
-    let levels: [Float]
-    private let bars = 21
+/// 어두운 팝오버의 하단 바. 안내 한 줄과 **되돌리는 쪽** 동작을 담는다.
+/// 받아쓰기('취소')와 회의 녹음('녹음 취소')이 같은 꼴을 쓴다 — 같은 자리에 같은 성격의 것만 둔다.
+struct PopoverBottomBar: View {
+    let hint: String
+    let action: String
+    let perform: () -> Void
 
     var body: some View {
-        HStack(alignment: .center, spacing: 3) {
-            ForEach(0..<bars, id: \.self) { i in
-                let distance = abs(i - bars / 2)
+        HStack(spacing: 8) {
+            Text(hint)
+                .font(.system(size: 11.5)).foregroundColor(.darkFaint)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button(action: perform) {
+                Text(action).font(.system(size: 11.5, weight: .semibold))
+                    .foregroundColor(.darkText)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 10)
+        .frame(maxWidth: .infinity)
+        .background(Color.darkBar)
+        .overlay(Rectangle().frame(height: 1).foregroundColor(.darkBarLine), alignment: .top)
+    }
+}
+
+/// 코랄 버튼 **안에** 들어가는 단축키 칩. 바깥의 `KeyCap` 과 달리 배경을 흰색 투명으로 깐다 —
+/// 회색 칩을 코랄 위에 올리면 탁해진다.
+struct CoralKeyCap: View {
+    let label: String
+    init(_ label: String) { self.label = label }
+
+    var body: some View {
+        Text(label)
+            .font(.system(size: 10.5, weight: .bold))
+            .foregroundColor(.white)
+            .padding(.horizontal, 6).padding(.vertical, 1)
+            .background(Color.white.opacity(0.2))
+            .cornerRadius(4)
+    }
+}
+
+/// 어두운 팝오버 안의 안내 상자. 빨간 경고가 아니라 **중립 안내**다 —
+/// 막힌 이유를 알려 줄 뿐 잘못한 것이 아니라서 경고색을 쓰지 않는다(시안 1d·2a).
+struct NoticeBox: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text("i")
+                .font(.system(size: 10, weight: .heavy)).foregroundColor(.darkSub)
+                .frame(width: 15, height: 15)
+                .overlay(Circle().stroke(Color.darkSub, lineWidth: 1.5))
+                .padding(.top, 1)
+            Text(text)
+                .font(.system(size: 12)).foregroundColor(.darkText)
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 11).padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.darkCard)
+        .cornerRadius(8)
+    }
+}
+
+/// 소리 막대. 가운데가 지금 들어오는 소리고, 바깥으로 갈수록 지나간 소리다.
+///
+/// ⚠️ `levels[0]` 이 **가운데**다. 바깥에서 안으로 흐르는 모양이라 그렇게 담겨 온다.
+///    인덱스를 그대로 쓰면 한쪽으로 쏠린 그림이 나온다.
+struct Waveform: View {
+    let levels: [Float]
+    /// 시안마다 막대 수와 굵기가 다르다(1d 35개·굵기 3, 2a 34개·굵기 3·간격 4).
+    var bars = 21
+    var width: CGFloat = 4
+    var spacing: CGFloat = 3
+    var height: CGFloat = 42
+    /// 주어진 폭을 꽉 채우도록 막대 수를 **그 자리에서 센다**(시안의 `flex:1`).
+    ///
+    /// ⚠️ 막대 수를 못 박으면 팝오버가 넘친다. 1d 는 파형 옆에 '요약' 버튼이 있고 그 버튼 폭은
+    ///    단축키 이름에 따라 달라지는데(`fn` vs `⌥ Space`), 35개를 그리면 207pt 라
+    ///    남는 자리를 넘겨 **글이 줄바꿈을 못 하고 팝오버 밖으로 밀려났다**(2026-10-01 실측).
+    var fillsWidth = false
+
+    var body: some View {
+        if fillsWidth {
+            // GeometryReader 는 제 폭을 주장하지 않는다 — 그래서 옆 것을 밀어내지 않는다.
+            GeometryReader { geo in
+                let unit = width + spacing
+                let count = max(1, Int((geo.size.width + spacing) / unit))
+                row(count)
+                    .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
+            }
+        } else {
+            row(bars)
+        }
+    }
+
+    /// 레벨을 막대 높이로. **그대로 곱하지 않는다** — 사람 말소리의 레벨은 0.2~0.4 에 몰려 있어서
+    /// 선형으로 그리면 막대가 바닥에 깔린다(2026-10-01 "파형 높이가 너무 낮다"). 제곱근 쪽으로
+    /// 휘어 중간값을 끌어올린다. 0 과 1 은 그대로라 "소리 없음"과 "가득"은 거짓이 되지 않는다.
+    private func barHeight(_ level: CGFloat) -> CGFloat {
+        let shaped = pow(max(0, min(1, level)), 0.55)
+        return max(3, 3 + shaped * (height - 3))
+    }
+
+    private func row(_ count: Int) -> some View {
+        HStack(alignment: .center, spacing: spacing) {
+            ForEach(0..<count, id: \.self) { i in
+                let distance = abs(i - count / 2)
                 let level = CGFloat(levels.indices.contains(distance) ? levels[distance] : 0)
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(distance <= 3 ? Color.coral : Color.darkMuted)
-                    .frame(width: 4, height: 6 + level * 36)
+                // 가운데 4분의 1 은 코랄. 시안의 `hot` 과 같은 기준이다.
+                let hot = CGFloat(distance) < CGFloat(count) * 0.25
+                RoundedRectangle(cornerRadius: width / 2)
+                    .fill(hot ? Color.coral : Color.darkWave)
+                    .frame(width: width, height: barHeight(level))
             }
         }
         .animation(.linear(duration: 0.1), value: levels)
@@ -821,8 +942,12 @@ struct MeetingProgressView: View {
     }
 }
 
-/// 회의를 지금 녹음하는 중. 받아쓰기 녹음과 같은 어두운 화면을 쓴다 — 같은 일(듣는 중)이라
-/// 같아 보여야 한다. 다른 점은 몇십 분씩 간다는 것이다.
+/// 회의 녹음 팝오버. 시안 `녹음 팝업 개선.dc.html` 의 **2a**(2026-10-01).
+///
+/// 전에는 하이라이트가 제목 아래 **독립된 줄**에 떠 있어서, 녹음을 끝내는 버튼과 성격이
+/// 같은 동작인데도 따로 놀았다. 2a 는 둘을 액션 영역에 위아래로 모으고, 되돌리는 쪽인
+/// '녹음 취소'는 하단 바로 내린다 — 녹음 전체를 버리는 동작이라 한 단계 멀리 둔다.
+/// 경과 시간을 키운 것은 회의에서 가장 자주 보는 값이 그것이기 때문이다.
 struct MeetingRecordingView: View {
     @ObservedObject var model: AppModel
     let run: AppModel.MeetingRecordingRun
@@ -831,20 +956,28 @@ struct MeetingRecordingView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
                 ZStack {
-                    Circle().fill(Color.coral.opacity(0.22)).frame(width: 20, height: 20)
-                    Circle().fill(Color.coral).frame(width: 10, height: 10)
+                    Circle().fill(Color.coral.opacity(0.22)).frame(width: 16, height: 16)
+                    Circle().fill(Color.coral).frame(width: 8, height: 8)
                 }
-                Text(run.inPerson ? "대면 회의 녹음 중" : "화상 회의 녹음 중")
-                    .font(.system(size: 14, weight: .semibold)).foregroundColor(.white)
-                Spacer()
+                .padding(.top, 3)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(run.inPerson ? "대면 회의 녹음 중" : "화상 회의 녹음 중")
+                        .font(.system(size: 13.5, weight: .bold)).foregroundColor(.darkTextMain)
+                    // 어느 마이크로 담고 있는지. 끝나고서야 알면 회의 하나가 통째로 날아간다.
+                    if let source = sourceLine {
+                        Text(source).font(.system(size: 11.5)).foregroundColor(.darkSub)
+                            .lineLimit(1).truncationMode(.tail)
+                    }
+                }
+                Spacer(minLength: 8)
                 Text(run.elapsedText)
-                    .font(.system(size: 13, weight: .medium).monospacedDigit())
-                    .foregroundColor(.darkSub)
+                    .font(.system(size: 20, weight: .bold).monospacedDigit())
+                    .foregroundColor(.darkTextMain)
                     .id(tick)
             }
-            .padding(.horizontal, 16).padding(.top, 16)
+            .padding(.horizontal, 16).padding(.top, 14)
 
             // 소리가 들어오고 있는지 눈으로 본다. 끝나고서야 아는 것이 제일 나쁘다.
             //
@@ -854,55 +987,119 @@ struct MeetingRecordingView: View {
             //    소리 단계에서 떼는 건 이미 실패했고(`EchoFilter` 주석: 목소리까지 26배 감쇠),
             //    레벨만 빼는 꼼수는 두 사람이 같이 말할 때 내 쪽을 지운다. 막대가 할 일은
             //    "수음이 되고 있나"를 보여 주는 것뿐이니, 갈라서 틀리게 그리느니 합친다.
-            //    (받아쓰기에서 나/상대를 가르는 것은 그대로다 — 그쪽은 글자 단계라 에코를 뗀다.)
-            Waveform(levels: combinedLevels)
+            // 막대 최대 36pt. 시안 2a 는 28pt 였는데 띄워 보니 회의 화면에서 너무 낮았다 —
+            // 받아쓰기와 달리 옆에 높이를 맞출 상대가 없어서 그 자체로 비어 보인다.
+            Waveform(levels: combinedLevels, width: 3, spacing: 4, height: 36, fillsWidth: true)
                 .frame(height: 44)
-                .padding(.top, 14).padding(.bottom, 14)
+                .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 4)
 
             if !run.inPerson, !run.capturingSystem {
-                // 모르고 회의를 다 녹음한 뒤에 알면 되돌릴 수 없다.
+                // 모르고 회의를 다 녹음한 뒤에 알면 되돌릴 수 없다. 이건 진짜 경고라 코랄로 둔다.
                 Text("상대 목소리를 못 잡고 있습니다 · 화면 기록 권한이 필요합니다.")
                     .font(.system(size: 11)).foregroundColor(.coral)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16).padding(.bottom, 12)
+                    .padding(.horizontal, 16).padding(.top, 4)
             }
 
-            HStack(spacing: 8) {
+            if let notice = model.notice {
+                NoticeBox(notice).padding(.horizontal, 12).padding(.top, 4)
+            }
+
+            VStack(spacing: 8) {
+                highlightButton
                 Button(action: model.actions.stopMeetingRecording) {
                     Text("끝내고 회의록 만들기")
-                        .font(.system(size: 14, weight: .semibold)).foregroundColor(.white)
-                        .frame(maxWidth: .infinity).frame(height: 42)
-                        .background(Color.coral).cornerRadius(10)
-                }
-                .buttonStyle(.plain)
-                // 잘못 시작했을 때 빠져나갈 길. 받아쓰기에도 있는데 여기만 없으면 갇힌다.
-                Button(action: model.actions.cancelMeetingRecording) {
-                    Text("취소")
-                        .font(.system(size: 13, weight: .semibold)).foregroundColor(.darkText)
-                        .frame(width: 66).frame(height: 42)
-                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.darkLine, lineWidth: 1))
-                    .contentShape(Rectangle())
+                        .font(.system(size: 13.5, weight: .bold)).foregroundColor(.white)
+                        .frame(maxWidth: .infinity).frame(height: 38)
+                        .background(Color.coral)
+                        .clipShape(RoundedRectangle(cornerRadius: 9))
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 12)
 
-            Text("이 창을 닫아도 녹음은 계속됩니다.")
-                .font(.system(size: 11)).foregroundColor(.darkMuted)
-                .padding(.top, 10).padding(.bottom, 14)
+            PopoverBottomBar(hint: "창을 닫아도 녹음은 계속돼요", action: "녹음 취소",
+                             perform: model.actions.cancelMeetingRecording)
         }
+        .background(Color.darkPanel)
         .onReceive(timer) { tick = $0 }
     }
 
-    /// 두 갈래 중 큰 쪽. 마이크만 쓰는 대면이거나 시스템 소리를 못 잡는 중이면 그냥 마이크다.
+    /// 하이라이트. **꺼짐**이면 회색 칸에 지금까지 표시한 개수를, **켜짐**이면 코랄로 바뀌며
+    /// 이번 구간이 얼마나 됐는지 보여 준다.
+    ///
+    /// ⚠️ 단축키만 두면 단축키를 안 정한 사람은 이 기능을 아예 못 쓴다. 누를 수 있는 버튼으로
+    ///    두고 단축키는 오른쪽 끝에 적어만 둔다 — 팝오버가 열려 있는 동안엔 버튼이 더 빠르다.
+    @ViewBuilder
+    private var highlightButton: some View {
+        let key = Prefs.extraHotKey(.highlight)
+        let on = model.highlightOn
+        Button(action: model.actions.toggleHighlight) {
+            HStack(spacing: 8) {
+                Image(systemName: on ? "bookmark.fill" : "bookmark")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(on ? .coral : .darkTextMain)
+                Text(on ? "하이라이트 중" : "하이라이트")
+                    .font(.system(size: 13, weight: on ? .bold : .semibold))
+                    .foregroundColor(on ? .coralOnDark : .darkTextMain)
+                if on {
+                    Text(highlightElapsed)
+                        .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                        .foregroundColor(.coralOnDark)
+                        .id(tick)
+                } else if model.highlightCount > 0 {
+                    // 눌렀는지 아닌지를 숫자로 바로 확인한다. 안 보이면 또 누르게 된다.
+                    Text("\(model.highlightCount)")
+                        .font(.system(size: 11, weight: .bold)).foregroundColor(.coral)
+                        .padding(.horizontal, 7).padding(.vertical, 1)
+                        .background(Color.coral.opacity(0.14))
+                        .clipShape(Capsule())
+                }
+                Spacer(minLength: 4)
+                if let key {
+                    Text(on ? "\(key.title) 끄기" : key.title)
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundColor(on ? .coralOnDark : .darkSub)
+                        .padding(.horizontal, 6).padding(.vertical, 1)
+                        .background(on ? Color.clear : Color.darkPanel)
+                        .overlay(RoundedRectangle(cornerRadius: 4)
+                            .stroke(on ? Color.coral.opacity(0.45) : Color.darkLine, lineWidth: 1))
+                }
+            }
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity).frame(height: 36)
+            .background(on ? Color.coral.opacity(0.14) : Color.darkCard)
+            .overlay(RoundedRectangle(cornerRadius: 9)
+                .stroke(on ? Color.coral.opacity(0.55) : Color.darkLine, lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 9))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("녹음 중 중요한 대목을 표시합니다")
+    }
+
+    /// 무엇을 담고 있는지 한 줄로. 화상은 마이크만 적으면 **상대 목소리도 담긴다는 사실**이
+    /// 안 보인다 — 녹음되는 줄 모르고 말하는 사람이 생긴다.
+    private var sourceLine: String? {
+        guard let mic = model.micName else { return nil }
+        guard !run.inPerson, run.capturingSystem else { return mic }
+        return mic + " · 스피커 소리"
+    }
+
+    private var highlightElapsed: String {
+        guard let started = model.highlightStartedAt else { return "0:00" }
+        let t = Int(Date().timeIntervalSince(started))
+        return String(format: "%d:%02d", t / 60, t % 60)
+    }
+
     private var combinedLevels: [Float] {
         guard !run.inPerson, run.capturingSystem else { return model.meetingMicLevels }
         return zip(model.meetingMicLevels, model.meetingSystemLevels).map { max($0, $1) }
     }
 }
 
-/// 팝오버 탭. 시안은 밑줄이 아니라 **분절 컨트롤**이다 — 바탕 위에 고른 쪽만 흰 칸이 얹힌다.
 struct PopoverTabBar: View {
     @ObservedObject var model: AppModel
 
@@ -945,8 +1142,12 @@ struct MeetingTabView: View {
                 // 바로 시작하는 둘은 나란히 둔다. 성격이 같은 짝이라 위아래로 쌓으면 목록처럼 보인다.
                 HStack(spacing: 8) {
                     liveCard(icon: "person.2", title: "대면 회의", fill: .meetingRow1,
+                             hotKey: .inPerson,
                              action: model.actions.startMeetingInPerson)
-                    liveCard(icon: "video", title: "화상 회의", fill: .meetingRow2,
+                    // ⚠️ 대면과 같은 색을 쓴다. 전에는 한 단계 흐린 `meetingRow2` 였는데,
+                    //    둘은 나란히 놓인 대등한 선택지라 색이 다르면 화상이 덜 중요해 보인다.
+                    liveCard(icon: "video", title: "화상 회의", fill: .meetingRow1,
+                             hotKey: .videoCall,
                              action: model.actions.startMeetingVideoCall)
                 }
                 // 파일은 지금 녹음하는 것이 아니라 **창을 여는** 동작이라 실시간 둘과 갈라 놓는다.
@@ -1011,11 +1212,23 @@ struct MeetingTabView: View {
     /// - Parameter onFill: 어두운 칸 위에 얹는지. 흰 칸이면 글자와 아이콘을 본래 색으로 쓴다.
     /// 바로 녹음이 시작되는 칸. 좁아서 아이콘과 제목을 위아래로 쌓는다.
     private func liveCard(icon: String, title: String, fill: Color,
+                          hotKey: HotKey.Slot? = nil,
                           action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        let key = hotKey.flatMap { Prefs.extraHotKey($0) }
+        return Button(action: action) {
             VStack(alignment: .leading, spacing: 7) {
+                // ⚠️ 아이콘 칸 높이를 못 박는다. SF Symbol 은 글리프마다 높이가 달라서
+                //    (2026-09-30 실측: person.2 19pt vs video 16pt) 그대로 두면 나란히 놓인
+                //    두 칸의 높이가 3pt 어긋난다. 레이아웃은 같은데 아이콘 탓이다.
                 Image(systemName: icon).font(.system(size: 16)).foregroundColor(.onMeetingRow)
-                Text(title).font(.system(size: 13, weight: .bold)).foregroundColor(.onMeetingRow)
+                    .frame(height: 20, alignment: .center)
+                HStack(spacing: 5) {
+                    Text(title).font(.system(size: 13, weight: .bold)).foregroundColor(.onMeetingRow)
+                    // 단축키를 정해 뒀으면 카드에 적어 둔다. 정하고도 잊어버리면 없는 것과 같다.
+                    // ⚠️ 받아쓰기 버튼과 같은 `KeyCap` 을 쓴다. 따로 만들었더니 같은 팝오버 안에서
+                    //    단축키 표시가 두 가지 모양이 됐다.
+                    if let key { KeyCap(key.title, accent: true) }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 12).padding(.vertical, 12)

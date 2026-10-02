@@ -5,42 +5,69 @@ import AppKit
 /// Carbon 전역 핫키. 접근성 권한 없이도 등록되며 어느 앱이 앞에 있든 동작한다.
 enum HotKey {
 
-    private static var handlerRef: EventHandlerRef?
-    private static var hotKeyRef: EventHotKeyRef?
-    private static var action: (() -> Void)?
-
-    /// 예: register(keyCode: UInt32(kVK_Space), modifiers: UInt32(controlKey | optionKey))
-    @discardableResult
-    static func register(keyCode: UInt32, modifiers: UInt32, action: @escaping () -> Void) -> Bool {
-        unregister()
-        self.action = action
-
-        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
-                                 eventKind: UInt32(kEventHotKeyPressed))
-
-        let installStatus = InstallEventHandler(
-            GetApplicationEventTarget(),
-            { _, _, _ -> OSStatus in
-                DispatchQueue.main.async { HotKey.action?() }
-                return noErr
-            },
-            1, &spec, nil, &handlerRef
-        )
-        guard installStatus == noErr else { return false }
-
-        // 'SOKG' 시그니처
-        let id = EventHotKeyID(signature: OSType(0x534F4B47), id: 1)
-        let registerStatus = RegisterEventHotKey(keyCode, modifiers, id,
-                                                 GetApplicationEventTarget(), 0, &hotKeyRef)
-        return registerStatus == noErr
+    /// 어느 단축키인지. Carbon 의 `EventHotKeyID.id` 로 쓰므로 값이 겹치면 안 된다.
+    enum Slot: UInt32, CaseIterable {
+        case dictation = 1   // 받아쓰기
+        case inPerson  = 2   // 대면 회의 녹음
+        case videoCall = 3   // 화상 회의 녹음
+        case highlight = 4   // 녹음 중 중요 구간 표시
     }
 
-    static func unregister() {
-        if let hotKeyRef { UnregisterEventHotKey(hotKeyRef) }
-        hotKeyRef = nil
+    private static var handlerRef: EventHandlerRef?
+    /// ⚠️ 슬롯마다 따로 들고 있어야 한다. 전에는 하나만 두고 등록할 때마다 앞의 것을
+    ///    내려서, 단축키를 둘 이상 쓸 수가 없었다.
+    private static var refs: [Slot: EventHotKeyRef] = [:]
+    private static var actions: [Slot: () -> Void] = [:]
+
+    /// 'SOKG' 시그니처
+    private static let signature = OSType(0x534F4B47)
+
+    @discardableResult
+    static func register(_ slot: Slot, keyCode: UInt32, modifiers: UInt32,
+                         action: @escaping () -> Void) -> Bool {
+        unregister(slot)
+        actions[slot] = action
+        guard installHandlerIfNeeded() else { return false }
+
+        var ref: EventHotKeyRef?
+        let id = EventHotKeyID(signature: signature, id: slot.rawValue)
+        let status = RegisterEventHotKey(keyCode, modifiers, id, GetApplicationEventTarget(), 0, &ref)
+        guard status == noErr, let ref else { actions[slot] = nil; return false }
+        refs[slot] = ref
+        return true
+    }
+
+    /// 핸들러는 하나면 된다. 눌린 키의 `id` 로 어느 슬롯인지 가린다.
+    private static func installHandlerIfNeeded() -> Bool {
+        guard handlerRef == nil else { return true }
+        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
+                                 eventKind: UInt32(kEventHotKeyPressed))
+        let status = InstallEventHandler(
+            GetApplicationEventTarget(),
+            { _, event, _ -> OSStatus in
+                var id = EventHotKeyID()
+                GetEventParameter(event, EventParamName(kEventParamDirectObject),
+                                  EventParamType(typeEventHotKeyID), nil,
+                                  MemoryLayout<EventHotKeyID>.size, nil, &id)
+                if let slot = Slot(rawValue: id.id) {
+                    DispatchQueue.main.async { HotKey.actions[slot]?() }
+                }
+                return noErr
+            },
+            1, &spec, nil, &handlerRef)
+        return status == noErr
+    }
+
+    static func unregister(_ slot: Slot) {
+        if let ref = refs[slot] { UnregisterEventHotKey(ref) }
+        refs[slot] = nil
+        actions[slot] = nil
+    }
+
+    static func unregisterAll() {
+        for slot in Slot.allCases { unregister(slot) }
         if let handlerRef { RemoveEventHandler(handlerRef) }
         handlerRef = nil
-        action = nil
     }
 }
 
@@ -114,27 +141,41 @@ struct HotKeyCombo: Equatable {
 /// 전역 이벤트 모니터라 손쉬운 사용 권한이 있어야 다른 앱 위에서 동작한다.
 enum ModifierHotKey {
     private static var monitors: [Any] = []
-    private static var target: UInt32 = 0
-    private static var armed = false
+    /// ⚠️ 슬롯마다 따로 들고 있어야 여러 개를 쓸 수 있다. `armed` 도 슬롯별이다 —
+    ///    하나로 두면 fn⌃ 를 누르는 동안 fn⌥ 의 상태까지 같이 풀린다.
+    private static var targets: [HotKey.Slot: UInt32] = [:]
+    private static var actions: [HotKey.Slot: () -> Void] = [:]
+    private static var armed: Set<HotKey.Slot> = []
 
     static var isAvailable: Bool { AXIsProcessTrusted() }
 
     @discardableResult
-    static func register(_ combo: HotKeyCombo, action: @escaping () -> Void) -> Bool {
-        unregister()
+    static func register(_ slot: HotKey.Slot, _ combo: HotKeyCombo,
+                         action: @escaping () -> Void) -> Bool {
         guard combo.isModifierOnly, combo.modifiers != 0, isAvailable else { return false }
-        target = combo.modifiers
+        targets[slot] = combo.modifiers
+        actions[slot] = action
+        installMonitorsIfNeeded()
+        return !monitors.isEmpty
+    }
 
+    /// 감시기는 하나면 된다. 들어온 수정자 조합을 슬롯마다 견준다.
+    private static func installMonitorsIfNeeded() {
+        guard monitors.isEmpty else { return }
         let handle: (NSEvent) -> Void = { event in
-            guard event.type == .flagsChanged else { armed = false; return }
+            guard event.type == .flagsChanged else { armed.removeAll(); return }
             let now = HotKeyCombo.modifierBits(from: event.modifierFlags)
-            if now == target {
-                armed = true
-            } else if armed, now & target != target {
-                armed = false
-                DispatchQueue.main.async(execute: action)
-            } else {
-                armed = false
+            // ⚠️ 더 많은 키를 쓴 단축키를 먼저 본다. fn⌃ 와 fn⌃⌥ 가 함께 있을 때
+            //    짧은 쪽이 먼저 걸리면 긴 쪽은 영영 못 누른다.
+            for (slot, target) in targets.sorted(by: { $0.value.nonzeroBitCount > $1.value.nonzeroBitCount }) {
+                if now == target {
+                    armed.insert(slot)
+                } else if armed.contains(slot), now & target != target {
+                    armed.remove(slot)
+                    if let action = actions[slot] { DispatchQueue.main.async(execute: action) }
+                } else {
+                    armed.remove(slot)
+                }
             }
         }
         if let g = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged, .keyDown], handler: handle) {
@@ -143,13 +184,21 @@ enum ModifierHotKey {
         if let l = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown], handler: { handle($0); return $0 }) {
             monitors.append(l)
         }
-        return !monitors.isEmpty
     }
 
-    static func unregister() {
+    static func unregister(_ slot: HotKey.Slot) {
+        targets[slot] = nil
+        actions[slot] = nil
+        armed.remove(slot)
+        if targets.isEmpty { unregisterAll() }
+    }
+
+    static func unregisterAll() {
         for m in monitors { NSEvent.removeMonitor(m) }
         monitors = []
-        armed = false
+        targets = [:]
+        actions = [:]
+        armed = []
     }
 }
 

@@ -3,6 +3,12 @@ import Combine
 
 /// 팝오버가 그리는 상태. AppDelegate가 갱신하고 SwiftUI가 관찰한다.
 final class AppModel: ObservableObject {
+    /// 녹음 화면에 잠깐 띄우는 알림("회의 중에는 받아쓰기를 할 수 없습니다").
+    /// ⚠️ `setState` 의 메시지는 메뉴바와 우클릭 메뉴에만 간다. **녹음 중 팝오버 두 개
+    ///    어디에도 상태 줄이 없어서**, 이것이 없으면 단축키를 눌러도 아무 일도 안 일어난
+    ///    것처럼 보인다 — 막았다는 사실 자체가 안 보이면 고장으로 읽힌다.
+    @Published var notice: String?
+
 
     enum Delivery {
         case copied     // 클립보드 복사
@@ -73,6 +79,18 @@ final class AppModel: ObservableObject {
     /// 기록에서 꺼내 본 것에는 채우지 않는다 — 그건 사용자가 일부러 연 것이라 저절로 닫히면 안 된다.
     @Published var resultShownAt: Date?
 
+    /// 지금 중요 표시가 켜져 있나. 녹음 화면에 드러낸다 — 켜 둔 줄 모르면 끄지도 못한다.
+    /// 지금 쓰는 마이크 이름("MacBook Pro 마이크"). 회의 녹음 팝오버가 제목 아래에 적는다 —
+    /// 엉뚱한 입력 장치로 회의를 통째로 녹음하는 사고를 **녹음 중에** 알아챌 수 있어야 한다.
+    @Published var micName: String?
+
+    /// 지금 켜 둔 하이라이트가 시작한 시각. 켜져 있는 동안 구간 길이를 보여 준다.
+    @Published var highlightStartedAt: Date?
+
+    @Published var highlightOn = false
+    /// 이번 녹음에서 표시한 대목 수.
+    @Published var highlightCount = 0
+
     enum Screen {
         case main
         case history
@@ -97,10 +115,18 @@ final class AppModel: ObservableObject {
     // 녹음 중
     @Published var elapsed: TimeInterval = 0
     /// 최근 파형 레벨. [0]이 가장 새 값. 0…1.
-    @Published var levels: [Float] = Array(repeating: 0, count: 11)
+    /// 파형에 쓸 소리 크기 이력. `levels[0]` 이 **가장 최근**이고, 파형은 그것을 가운데에 놓고
+    /// 양쪽으로 펼친다. 그래서 막대 n개를 그리려면 이력이 `n/2 + 1` 개 있어야 한다.
+    ///
+    /// ⚠️ 11개로 두면 막대 21개까지만 덮는다. 2026-10-01 시안이 막대를 폭에 맞춰 30~44개
+    ///    그리게 되면서, 11번째 바깥 막대가 전부 데이터 없이 최소 높이로 깔려 **파형이 선처럼
+    ///    보였다.** 넉넉히 22개를 둔다(막대 45개까지).
+    static let levelCount = 22
+
+    @Published var levels: [Float] = Array(repeating: 0, count: AppModel.levelCount)
     /// 회의 녹음용. 받아쓰기와 따로 두는 이유는 화상일 때 두 줄(나·상대)을 함께 보여 주기 때문이다.
-    @Published var meetingMicLevels: [Float] = Array(repeating: 0, count: 11)
-    @Published var meetingSystemLevels: [Float] = Array(repeating: 0, count: 11)
+    @Published var meetingMicLevels: [Float] = Array(repeating: 0, count: AppModel.levelCount)
+    @Published var meetingSystemLevels: [Float] = Array(repeating: 0, count: AppModel.levelCount)
     @Published var partialText = ""
 
     // 완료 화면
@@ -143,6 +169,8 @@ final class AppModel: ObservableObject {
         /// 받아쓰기 기록 오른쪽 클릭 → 이름 바꾸기 / 지우기.
         var renameSummary: (SummaryRecord) -> Void = { _ in }
         var removeSummary: (SummaryRecord) -> Void = { _ in }
+        /// 녹음 중 팝오버의 하이라이트 버튼. 단축키와 같은 일을 한다.
+        var toggleHighlight: () -> Void = {}
         var cancelMeetingNotes: () -> Void = {}
         /// 지금부터 회의를 녹음한다. 대면은 마이크만, 화상은 스피커 소리까지 잡는다.
         var startMeetingInPerson: () -> Void = {}
@@ -171,7 +199,7 @@ final class AppModel: ObservableObject {
     func resetRecording() {
         elapsed = 0
         partialText = ""
-        levels = Array(repeating: 0, count: 11)
+        levels = Array(repeating: 0, count: AppModel.levelCount)
     }
 
     func refreshPrefs() {
