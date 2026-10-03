@@ -19,6 +19,12 @@ enum ModelStore {
         directory.appendingPathComponent(transcriptionModelName)
     }
 
+    /// 말소리 구간을 찾는 모델(silero VAD). **앱 번들에 들어 있다** — 885KB 라 내려받지 않는다.
+    /// 없으면(개발 중 번들을 손으로 만든 경우 등) nil 을 돌려주고, 받아쓰기는 VAD 없이 돈다.
+    static var vadModel: URL? {
+        Bundle.main.url(forResource: "ggml-silero-v5.1.2", withExtension: "bin")
+    }
+
     static var hasTranscriptionModel: Bool {
         FileManager.default.fileExists(atPath: transcriptionModel.path)
     }

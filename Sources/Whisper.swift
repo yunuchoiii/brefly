@@ -84,6 +84,7 @@ enum Whisper {
     static func transcribe(audio: URL, model: URL, language: String = "ko",
                            threads: Int32 = 8,
                            guards: Guards = .default,
+                           vadModel: URL? = nil,
                            cancel: CancelToken? = nil,
                            onProgress: ((Double) -> Void)? = nil) throws -> [Segment] {
         guard FileManager.default.fileExists(atPath: model.path) else { throw Failure.modelMissing(model) }
@@ -135,6 +136,15 @@ enum Whisper {
         }
 
         // ⚠️ C 쪽은 이 포인터를 붙잡고 있는다. 문자열을 그 자리에서 만들어 넘기면 이미 사라진 뒤를 가리킨다.
+        // VAD 를 켜면 말이 있는 구간만 골라 받아쓴다. 경로 문자열도 C 쪽이 붙잡으므로 수명을 늘려 둔다.
+        let vadPath = vadModel?.path ?? ""
+        if vadModel != nil {
+            params.vad = true
+            params.vad_params = whisper_vad_default_params()
+        }
+        Log.write("받아쓰기 시작 — \(audio.lastPathComponent), VAD \(vadModel == nil ? "끔(모델 없음)" : "켬")")
+        return try vadPath.withCString { vadPointer in
+        if vadModel != nil { params.vad_model_path = vadPointer }
         return try language.withCString { languagePointer in
             params.language = languagePointer
             // ⚠️ 상자를 붙잡아 둔다. 중간에 풀려나면 콜백이 사라진 객체를 가리킨다.
@@ -156,6 +166,7 @@ enum Whisper {
                                         end: Double(whisper_full_get_segment_t1(context, i)) / 100))
             }
             return collapseRuns(segments)
+        }
         }
     }
 

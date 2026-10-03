@@ -356,7 +356,13 @@ if let i = CommandLine.arguments.firstIndex(of: "--whisper"), i + 1 < CommandLin
         if let t = num("--temp-inc") { guards.temperatureInc = t }
         if let e = num("--entropy") { guards.entropyThreshold = e }
         print("손잡이: no_context=\(guards.noContext) temp_inc=\(guards.temperatureInc) entropy=\(guards.entropyThreshold)")
-        let segments = try Whisper.transcribe(audio: audio, model: model, language: lang, guards: guards)
+        // `--vad <모델>` 로 말이 있는 구간만 받아쓴다. 음악·침묵에서 나오는 환청을 견줘 본다.
+        let vad = CommandLine.arguments.firstIndex(of: "--vad").flatMap { j in
+            j + 1 < CommandLine.arguments.count ? URL(fileURLWithPath: CommandLine.arguments[j + 1]) : nil
+        }
+        if let vad { print("VAD: \(vad.lastPathComponent)") }
+        let segments = try Whisper.transcribe(audio: audio, model: model, language: lang,
+                                              guards: guards, vadModel: vad)
         let took = Date().timeIntervalSince(started)
         let text = segments.map(\.text).joined(separator: " ")
         print("OK \(String(format: "%.1f", took))초, 구간 \(segments.count)개, 글자 \(text.count)")

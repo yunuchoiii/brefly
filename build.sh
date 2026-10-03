@@ -74,6 +74,12 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 # 빈 ko.lproj 만 있으면 된다 — 내용은 필요 없다.
 mkdir -p "$APP/Contents/Resources/ko.lproj"
 
+# --- 말소리 구간 찾기(VAD) 모델 ----------------------------------------------
+# 회의록 받아쓰기가 음악·침묵에서 환청을 쏟지 않게, 말이 있는 구간만 골라 받아쓴다.
+# 885KB 라 내려받게 하지 않고 번들에 넣는다 — 받아쓰기 모델(547MB)과 달리 단계를
+# 하나 더 만들 값이 없다. 출처: huggingface.co/ggml-org/whisper-vad (silero v5.1.2, MIT).
+cp "$DIR/vendor/whisper/models/ggml-silero-v5.1.2.bin" "$APP/Contents/Resources/"
+
 # --- Sparkle 프레임워크 ----------------------------------------------------
 # 앱 스스로 업데이트를 받아 교체하려면 Sparkle 이 번들 안에 들어가야 한다.
 # cp -R 로 심볼릭 링크를 그대로 옮긴다(rsync -L 같은 건 링크를 풀어 서명이 깨진다).

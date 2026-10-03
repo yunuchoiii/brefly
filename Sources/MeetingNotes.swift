@@ -232,7 +232,7 @@ enum MeetingNotes {
             let segments: [Whisper.Segment]
             do {
                 segments = try Whisper.transcribe(audio: audio, model: ModelStore.transcriptionModel,
-                                              language: language,
+                                              language: language, vadModel: ModelStore.vadModel,
                                                   cancel: cancel,
                                                   onProgress: { onProgress(Progress(stage: .transcribing, fraction: $0)) })
             } catch {
@@ -379,13 +379,13 @@ enum MeetingNotes {
                 // 두 트랙을 잇달아 받아쓴다. 진행률은 둘을 합쳐 하나로 보여 준다 —
                 // 0%까지 갔다가 다시 0%부터 오르면 멈춘 줄 안다.
                 let micSegments = try Whisper.transcribe(
-                    audio: mic, model: model, language: language, cancel: cancel,
+                    audio: mic, model: model, language: language, vadModel: ModelStore.vadModel, cancel: cancel,
                     onProgress: { onProgress(Progress(stage: .transcribing,
                                                       fraction: hasSystem ? $0 / 2 : $0)) })
                 var systemSegments: [Whisper.Segment] = []
                 if let system {
                     systemSegments = try Whisper.transcribe(
-                        audio: system, model: model, language: language, cancel: cancel,
+                        audio: system, model: model, language: language, vadModel: ModelStore.vadModel, cancel: cancel,
                         onProgress: { onProgress(Progress(stage: .transcribing, fraction: 0.5 + $0 / 2)) })
                 }
 
