@@ -953,18 +953,14 @@ struct MeetingProgressView: View {
             HairLine()
 
             // 대기 화면으로 나가는 문. 돌아올 때는 대기 화면 위쪽의 "회의록 만드는 중" 줄을 누른다.
-            // ⚠️ 오른쪽 안내가 중요하다 — 나가면 취소되는 줄 알고 안 누른다.
+            // ⚠️ "처음으로" 라고 썼다가 바꿨다 — 요약을 그만두고 홈으로 간다는 뜻으로 읽혔다.
+            //    뒤로 가는 화살표(‹)도 같은 인상을 준다. 계속된다는 것이 버튼 이름에서 읽혀야 한다.
             HStack {
-                Button(action: { model.phase = .idle }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chevron.left").font(.system(size: 10, weight: .semibold))
-                        Text("처음으로")
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+                Button("다른 작업 하기") { model.phase = .idle }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold)).foregroundColor(.text2)
                 Spacer()
-                Text("나가거나 닫아도 계속 만듭니다").font(.system(size: 10.5)).foregroundColor(.text4)
+                Text("회의록은 뒤에서 계속 만듭니다").font(.system(size: 10.5)).foregroundColor(.text4)
             }
             .font(.system(size: 12)).foregroundColor(.text3)
             .padding(.horizontal, 16).padding(.vertical, 10)
