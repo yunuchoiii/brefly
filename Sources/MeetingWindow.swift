@@ -60,6 +60,7 @@ final class MeetingWindow: NSObject, NSWindowDelegate {
             //    먼저 열었던 회의록 이름이 그대로 남아** 있었다.
             window.title = document.title
             window.contentView = NSHostingView(rootView: view)
+            window.collectionBehavior.insert(.moveToActiveSpace)
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
@@ -73,6 +74,11 @@ final class MeetingWindow: NSObject, NSWindowDelegate {
         window.contentView = NSHostingView(rootView: view)
         window.center()
         window.isReleasedWhenClosed = false
+        // ⚠️ 창을 **다시 쓰기** 때문에(위 `if let window`), 닫혀도 남은 창은 처음 열렸던 Space 에
+        //    붙어 있다. 그대로 앞으로 부르면 macOS 가 그 Space 로 화면을 **휙 넘겨** 버린다
+        //    (2026-10-04 화면 녹화 42~45초 — 9시 4분 회의록을 열었던 데스크톱으로 갔다가 돌아왔다).
+        //    지금 보고 있는 Space 로 창을 데려온다.
+        window.collectionBehavior.insert(.moveToActiveSpace)
         window.delegate = self
         self.window = window
         window.makeKeyAndOrderFront(nil)

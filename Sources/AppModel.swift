@@ -87,6 +87,11 @@ final class AppModel: ObservableObject {
     /// 지금 켜 둔 하이라이트가 시작한 시각. 켜져 있는 동안 구간 길이를 보여 준다.
     @Published var highlightStartedAt: Date?
 
+    /// 뒤에서 돌고 있는 회의록 요약. 대기 화면이 이걸 보고 진행 줄을 띄운다.
+    /// ⚠️ 이게 없으면 받아쓰기를 하고 "처음으로" 를 누른 뒤엔 회의록이 82% 까지 돌고 있어도
+    ///    화면 어디에도 안 보였다(2026-10-04 화면 녹화 21~25초). 메뉴바 숫자만 남았다.
+    @Published var backgroundMeeting: MeetingRun?
+
     /// 회의를 녹음하는데 한참째 소리가 안 들어온다. 녹음은 그대로 돌고, 알리기만 한다.
     @Published var meetingSilent = false
 
@@ -174,6 +179,8 @@ final class AppModel: ObservableObject {
         var removeSummary: (SummaryRecord) -> Void = { _ in }
         /// 녹음 중 팝오버의 하이라이트 버튼. 단축키와 같은 일을 한다.
         var toggleHighlight: () -> Void = {}
+        /// 대기 화면의 진행 줄을 눌렀을 때 — 회의록 만드는 중 화면으로 돌아간다.
+        var showMeetingProgress: () -> Void = {}
         var cancelMeetingNotes: () -> Void = {}
         /// 지금부터 회의를 녹음한다. 대면은 마이크만, 화상은 스피커 소리까지 잡는다.
         var startMeetingInPerson: () -> Void = {}

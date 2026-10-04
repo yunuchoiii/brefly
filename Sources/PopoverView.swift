@@ -39,6 +39,42 @@ struct PopoverRoot: View {
 
 // MARK: - 1a 대기
 
+/// 대기 화면 위쪽의 "회의록 만드는 중" 줄. 누르면 진행 화면으로 간다.
+struct BackgroundMeetingRow: View {
+    let run: AppModel.MeetingRun
+    let action: () -> Void
+
+    private var detail: String {
+        switch run.stage {
+        case .transcribing:
+            return run.fraction.map { "받아쓰는 중 \(Int($0 * 100))%" } ?? "받아쓰는 중"
+        default:
+            return "요약하는 중"
+        }
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                ProgressView().controlSize(.small).scaleEffect(0.8)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("회의록 만드는 중").font(.system(size: 12.5, weight: .semibold)).foregroundColor(.ink)
+                    Text(detail).font(.system(size: 11)).foregroundColor(.text3)
+                }
+                Spacer()
+                Text("보기").font(.system(size: 12, weight: .semibold)).foregroundColor(.coral)
+                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundColor(.coral)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 9)
+            .background(Color.coral.opacity(0.08))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.coral.opacity(0.3), lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 9))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 struct IdleView: View {
     @ObservedObject var model: AppModel
 
@@ -59,6 +95,12 @@ struct IdleView: View {
                 Circle().fill(model.micReady ? Color.green : Color.coral).frame(width: 8, height: 8)
             }
             .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 10)
+
+            // 회의록이 뒤에서 돌고 있으면 탭과 상관없이 보여 준다. 받아쓰기 탭에 있어도 길을 잃지 않게.
+            if let run = model.backgroundMeeting {
+                BackgroundMeetingRow(run: run, action: model.actions.showMeetingProgress)
+                    .padding(.horizontal, 16).padding(.bottom, 10)
+            }
 
             PopoverTabBar(model: model)
             HairLine()

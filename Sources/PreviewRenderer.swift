@@ -105,6 +105,15 @@ enum PreviewRenderer {
         model.phase = .idle
         model.tab = .meeting
         snap("1f-meeting-tab")
+        // 회의록이 뒤에서 돌고 있을 때. 받아쓰기 탭에 있어도 진행 줄이 보여야 한다.
+        model.backgroundMeeting = AppModel.MeetingRun(fileName: "회의 녹음", audioSeconds: 2112,
+                                                      startedAt: Date().addingTimeInterval(-40),
+                                                      stage: .transcribing, fraction: 0.82)
+        snap("1f-meeting-tab-background")
+        model.tab = .dictation
+        snap("1a-idle-background-meeting")
+        model.backgroundMeeting = nil
+        model.tab = .meeting
         // "녹음본에서 추출" 칸은 모드마다 회색이 달라진다. 어두운 쪽도 찍어야 대비를 본다 —
         // 전에 밝은 회색 칩이 어두운 배경에서 안 보인 적이 있다.
         write(render(PopoverRoot(model: model), dark: true),
