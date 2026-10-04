@@ -952,9 +952,22 @@ struct MeetingProgressView: View {
 
             HairLine()
 
-            Text("이 창을 닫아도 계속됩니다 · 메뉴바에서 진행률이 보입니다.")
-                .font(.system(size: 10.5)).foregroundColor(.text3)
-                .padding(.horizontal, 16).padding(.vertical, 9)
+            // 대기 화면으로 나가는 문. 돌아올 때는 대기 화면 위쪽의 "회의록 만드는 중" 줄을 누른다.
+            // ⚠️ 오른쪽 안내가 중요하다 — 나가면 취소되는 줄 알고 안 누른다.
+            HStack {
+                Button(action: { model.phase = .idle }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left").font(.system(size: 10, weight: .semibold))
+                        Text("처음으로")
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                Spacer()
+                Text("나가거나 닫아도 계속 만듭니다").font(.system(size: 10.5)).foregroundColor(.text4)
+            }
+            .font(.system(size: 12)).foregroundColor(.text3)
+            .padding(.horizontal, 16).padding(.vertical, 10)
         }
         .onReceive(timer) { tick = $0 }
     }

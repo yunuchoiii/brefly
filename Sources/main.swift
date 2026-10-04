@@ -1211,8 +1211,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // ⚠️ 단, 받아쓰기가 **지금 돌고 있으면 건드리지 않는다.** 2026-10-01 에 여기서
         //    조건 없이 덮었더니, 회의 중 받아쓰기를 하는 24초 동안 파형도 글자도 안 보이고
         //    회의 화면만 떠서 받아쓰기가 되고 있는지 알 수가 없었다.
-        // 녹음 중이든 요약 중이든, 회의록이 돌고 있으면 그 화면을 보여 준다.
-        if !isDictating, isMeetingBusy, !isShowingMeetingPhase {
+        // 회의를 **녹음하는** 중이면 그 화면으로 끌고 간다 — 멈출 버튼이 꼭 보여야 한다.
+        // ⚠️ **요약 중은 끌고 가지 않는다**(2026-10-04). 진행 화면에 "처음으로" 를 두었는데
+        //    여기서 매번 끌고 가면, 나갔다가 팝오버를 다시 여는 순간 진행 화면으로 돌아가
+        //    나가는 문이 소용없어진다. 대기 화면 위쪽의 진행 줄이 돌아오는 문이다.
+        if !isDictating, meetingRecorder != nil, !isShowingMeetingPhase {
             _ = restoreMeetingPhaseIfRecording()
             model.resultShownAt = nil
         } else if case .done = model.phase, let shown = model.resultShownAt,
@@ -2340,13 +2343,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             model.phase = .meetingRecording(run)
             return true
         }
-        // ⚠️ **요약 중도 되돌린다.** 녹음은 끝났지만 1~2분 걸리는 일이 돌고 있다. 2026-10-02 에
-        //    녹음 쪽만 챙기고 이쪽을 빠뜨려서, 요약 중에 받아쓰기를 한 번 하면 그다음부터
-        //    대기 화면이 떴다 — 메뉴바에는 95% 가 도는데 팝오버에는 아무 말이 없었다.
-        if isMakingMeetingNotes, let run = meetingRun {
-            model.phase = .meeting(run)
-            return true
-        }
+        // 요약 중에는 되돌리지 않는다. 받아쓰기가 끝나면 대기 화면으로 가고, 위쪽의
+        // "회의록 만드는 중" 줄이 진행 화면으로 돌아가는 문이다. 받아쓰기가 성공으로 끝나든
+        // 취소되든 같은 곳에 떨어져야 헷갈리지 않는다.
+        // (2026-10-02 에는 여기서 진행 화면으로 되돌렸다. 그때는 대기 화면에 진행 줄이 없어서
+        //  되돌리지 않으면 볼 길이 아예 없었다.)
         return false
     }
 
@@ -2361,11 +2362,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         case .recording, .polishing: return true
         default: return false
         }
-    }
-
-    /// 회의록이 무언가 하고 있는가 — 녹음 중이거나 요약 중. 둘 다 팝오버가 보여 줘야 할 상태다.
-    private var isMeetingBusy: Bool {
-        (meetingRecorder != nil && meetingRecordingRun != nil) || (isMakingMeetingNotes && meetingRun != nil)
     }
 
     /// 지금 팝오버가 이미 그 화면을 보여 주고 있는가.
