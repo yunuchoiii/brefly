@@ -956,9 +956,15 @@ struct MeetingProgressView: View {
             // ⚠️ "처음으로" 라고 썼다가 바꿨다 — 요약을 그만두고 홈으로 간다는 뜻으로 읽혔다.
             //    뒤로 가는 화살표(‹)도 같은 인상을 준다. 계속된다는 것이 버튼 이름에서 읽혀야 한다.
             HStack {
-                Button("다른 작업 하기") { model.phase = .idle }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12, weight: .semibold)).foregroundColor(.text2)
+                Button(action: { model.phase = .idle }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left").font(.system(size: 10, weight: .semibold))
+                        Text("Home")
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .semibold)).foregroundColor(.text2)
                 Spacer()
                 Text("회의록은 뒤에서 계속 만듭니다").font(.system(size: 10.5)).foregroundColor(.text4)
             }
