@@ -76,7 +76,20 @@ enum MeetingNotes {
     /// 없는 담당자와 마감을 채워 넣는다. 회의록은 그러면 못 쓴다 — 틀린 회의록은 없느니만 못하다.
     /// 화자를 아는 경우에 앞에 덧붙이는 말. 직접 녹음하면 마이크=나, 시스템 소리=상대로
     /// 채널이 갈려 있어서 누가 말했는지 안다. 그때는 "추측하지 말라"가 오히려 방해가 된다.
-    private static let speakerNote = """
+    private static func speakerNote(for transcript: String) -> String {
+        transcript.range(of: #"(^|\n)화자 \d+:"#, options: .regularExpression) != nil
+            ? voiceSpeakerNote : trackSpeakerNote
+    }
+
+    /// 대면 회의·녹음 파일에서 목소리로 가른 경우(`Diarizer`). 채널로 가른 것보다 덜 확실하다.
+    private static let voiceSpeakerNote = """
+        각 줄 앞의 "화자 1:", "화자 2:" 는 목소리로 가른 것이다. 대체로 맞지만 짧은 말은 틀릴 수 있다.
+        번호는 이름이 아니다. 누가 몇 번인지 추측하지 않는다.
+        담당자를 적을 때 원문에서 부른 이름이 있으면 그 이름을, 없으면 "화자 1" 처럼 번호를 쓴다.
+
+        """
+
+    private static let trackSpeakerNote = """
         각 줄 앞의 "나:" 와 "상대:" 는 실제로 갈라 녹음한 것이라 믿어도 된다.
         다만 "상대" 안에 여러 사람이 섞여 있을 수 있다. 몇 명인지는 알 수 없으므로 세지 않는다.
         담당자를 적을 때 "나"/"상대" 말고 실제 이름은 원문에서 부른 것만 쓴다.
@@ -254,13 +267,17 @@ enum MeetingNotes {
                 completion(.failure(Whisper.Failure.cancelled))
                 return
             }
+            // 목소리로 화자를 가른다. 2명 이상일 때만 붙고, 아니면 지금처럼 화자 없이 간다.
+            let speakers = Diarizer.label(segments, audio: audio)
+            let shown = speakers ?? segments
+            let text = speakers.map { Glossary.apply(to: Diarizer.transcript($0)) } ?? transcript
             // 여기서 원문을 넘긴다. 요약 전이다 — 이 뒤로는 요약이 어떻게 되든 안 잃는다.
-            onTranscript?(transcript, segments)
+            onTranscript?(text, shown)
             onProgress(Progress(stage: .summarizing, fraction: nil))
 
             let summarizeStarted = Date()
-            summarize(transcript) { result in
-                completion(.success(assemble(result, transcript: transcript, segments: segments,
+            summarize(text, speakersKnown: speakers != nil) { result in
+                completion(.success(assemble(result, transcript: text, segments: shown,
                                              transcribeSeconds: transcribeSeconds,
                                              summarizeStarted: summarizeStarted)))
             }
@@ -297,7 +314,7 @@ enum MeetingNotes {
 
         // 화자 이름과 불릿은 내용이 아니다. 빼고 센다.
         let spoken = Set(segments.map {
-            $0.text.replacingOccurrences(of: #"^\s*(나|상대)\s*:\s*|^\s*-\s*"#,
+            $0.text.replacingOccurrences(of: #"^\s*(나|상대|화자 \d+)\s*:\s*|^\s*-\s*"#,
                                          with: "", options: .regularExpression)
                 .trimmingCharacters(in: .whitespaces)
         }).filter { !$0.isEmpty }
@@ -390,7 +407,7 @@ enum MeetingNotes {
                 }
 
                 // 용어 치환은 합친 글에 한 번만 건다.
-                let merged = Glossary.apply(to: EchoFilter.merge(mic: micSegments, system: systemSegments))
+                var merged = Glossary.apply(to: EchoFilter.merge(mic: micSegments, system: systemSegments))
                 let transcribeSeconds = Date().timeIntervalSince(started)
                 if cancel?.isCancelled == true {
                     completion(.failure(Whisper.Failure.cancelled))
@@ -400,7 +417,15 @@ enum MeetingNotes {
                 //    전에는 `micSegments + systemSegments` 로 이어 붙여서, 원문 탭이
                 //    내 말 전부 → 상대 말 전부 순서로 나오고 시각이 중간에 0 으로 되돌아갔다.
                 //    에코도 안 걸러져서 상대 말이 두 번 보였다.
-                let shown = EchoFilter.labelled(mic: micSegments, system: systemSegments)
+                var shown = EchoFilter.labelled(mic: micSegments, system: systemSegments)
+                // 대면 회의는 트랙이 하나라 목소리로 가른다. 2명 이상일 때만 붙는다.
+                // 말이 없는 녹음엔 돌리지 않는다 — 아래에서 어차피 버린다.
+                let voiceSpeakers = hasSystem || isNoSpeech(merged, segments: shown)
+                    ? nil : Diarizer.label(micSegments, audio: mic)
+                if let voiceSpeakers {
+                    shown = voiceSpeakers
+                    merged = Glossary.apply(to: Diarizer.transcript(voiceSpeakers))
+                }
                 // ⚠️ `make` 와 **따로** 건다. 두 구현이 나뉘어 있어서, 한쪽에만 넣으면 실제
                 //    회의 녹음(이쪽)은 그냥 지나간다. 2026-10-01 에 한 번 그랬다.
                 guard !isNoSpeech(merged, segments: shown) else {
@@ -413,7 +438,7 @@ enum MeetingNotes {
                 let summarizeStarted = Date()
                 let note = highlightNote(highlights, segments: shown)
                 if !note.isEmpty { Log.write("중요 표시 \(highlights.count)곳을 요약에 짚어 준다") }
-                summarize(merged, speakersKnown: hasSystem, highlightNote: note) { result in
+                summarize(merged, speakersKnown: hasSystem || voiceSpeakers != nil, highlightNote: note) { result in
                     completion(.success(assemble(result, transcript: merged, segments: shown,
                                                  transcribeSeconds: transcribeSeconds,
                                                  summarizeStarted: summarizeStarted)))
@@ -589,7 +614,7 @@ enum MeetingNotes {
                              detail: Prefs.MeetingDetail,
                              backend: Prefs.Backend, model: String,
                              completion: @escaping (Swift.Result<String, Error>) -> Void) {
-        let system = (speakersKnown ? speakerNote : "") + highlightNote + instruction(detail)
+        let system = (speakersKnown ? speakerNote(for: transcript) : "") + highlightNote + instruction(detail)
         let user = "<회의록>\n\(transcript)\n</회의록>"
         switch backend {
         case .openai:
@@ -624,7 +649,7 @@ enum MeetingNotes {
         }
 
         let body: [String: Any] = [
-            "contents": [["parts": [["text": "\(speakersKnown ? speakerNote : "")\(instruction(detail))\n\n<회의록>\n\(transcript)\n</회의록>"]]]],
+            "contents": [["parts": [["text": "\(speakersKnown ? speakerNote(for: transcript) : "")\(instruction(detail))\n\n<회의록>\n\(transcript)\n</회의록>"]]]],
             "generationConfig": [
                 "temperature": 0.2,
                 // 회의록은 길다. 받아쓰기 쪽 2048 로는 표가 중간에 끊긴다.

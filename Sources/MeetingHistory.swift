@@ -137,7 +137,12 @@ enum MeetingHistoryStore {
 
     static func saveSegments(_ segments: [Whisper.Segment], id: String) {
         try? FileManager.default.createDirectory(at: segmentsDirectory, withIntermediateDirectories: true)
-        let rows = segments.map { ["text": $0.text, "start": $0.start, "end": $0.end] as [String: Any] }
+        // 화자도 같이 남긴다. 안 남기면 다시 열었을 때 "나/상대", "화자 1/2" 가 사라진다.
+        let rows = segments.map { s -> [String: Any] in
+            var row: [String: Any] = ["text": s.text, "start": s.start, "end": s.end]
+            if let speaker = s.speaker { row["speaker"] = speaker }
+            return row
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: rows) else { return }
         try? data.write(to: segmentsDirectory.appendingPathComponent("\(id).json"))
     }
@@ -149,7 +154,7 @@ enum MeetingHistoryStore {
             guard let text = row["text"] as? String,
                   let start = row["start"] as? Double,
                   let end = row["end"] as? Double else { return nil }
-            return Whisper.Segment(text: text, start: start, end: end)
+            return Whisper.Segment(text: text, start: start, end: end, speaker: row["speaker"] as? String)
         }
     }
 

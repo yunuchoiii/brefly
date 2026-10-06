@@ -382,6 +382,27 @@ if let i = CommandLine.arguments.firstIndex(of: "--whisper"), i + 1 < CommandLin
     exit(0)
 }
 
+// 진단용: 녹음 하나를 받아쓰고 목소리로 화자를 가른다. 요약은 안 부른다.
+//   Brefly --diarize <소리 파일>
+if let i = CommandLine.arguments.firstIndex(of: "--diarize"), i + 1 < CommandLine.arguments.count {
+    let audio = URL(fileURLWithPath: CommandLine.arguments[i + 1])
+    do {
+        let started = Date()
+        let segments = try Whisper.transcribe(audio: audio, model: ModelStore.transcriptionModel,
+                                              language: String(Prefs.localeID.prefix(2)),
+                                              vadModel: ModelStore.vadModel)
+        print("받아쓰기 \(String(format: "%.1f", Date().timeIntervalSince(started)))초, 구간 \(segments.count)개")
+        if let labelled = Diarizer.label(segments, audio: audio) {
+            print(Diarizer.transcript(labelled))
+        } else {
+            print("화자 2명 미만 — 붙이지 않음")
+        }
+    } catch {
+        print("FAIL \(error.localizedDescription)")
+    }
+    exit(0)
+}
+
 // 진단용: 마이크와 시스템 소리를 함께 회의 녹음한다. 두 갈래가 제대로 갈려 들어오는지 본다.
 if let i = CommandLine.arguments.firstIndex(of: "--record-meeting"), i + 1 < CommandLine.arguments.count {
     let seconds = Double(CommandLine.arguments[i + 1]) ?? 10
@@ -604,6 +625,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.write("=== Brefly 시작 === 로그: \(Log.url.path)")
         Prefs.migrateFromPreviousNamesIfNeeded()
+        // 회의록을 쓰는 사람(받아쓰기 모델을 받은 사람)에게만 화자 분리 모델을 받아 둔다.
+        // 받아쓰기만 쓰는 사람은 21MB 를 받을 까닭이 없다. macOS 13 은 못 돌리니 안 받는다.
+        if #available(macOS 14.0, *), ModelStore.hasTranscriptionModel { DiarizationModels.ensure() }
         // CLI 를 쓰던 사람은 말없이 AUTO 로 떨어진다. 왜 달라졌는지 한 번은 알려 준다.
         if let note = Prefs.migrateAwayFromCLIIfNeeded() {
             Log.write("CLI 백엔드 제거 — AUTO 로 옮김")
@@ -2670,10 +2694,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             model.meetingHistory = MeetingHistoryStore.load()
             return
         }
+        let segments = MeetingHistoryStore.segments(id: record.id)
         MeetingWindow.shared.show(MeetingDocument(
             title: record.title, audio: record.audioFile, notesFile: record.notesFile,
             recordedAt: record.date, duration: record.seconds,
-            notes: notes, segments: MeetingHistoryStore.segments(id: record.id)))
+            notes: notes, segments: segments,
+            speakersKnown: segments.contains { $0.speaker != nil }))
     }
 
     @objc private func cancelMeetingNotes() {

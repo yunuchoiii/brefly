@@ -223,6 +223,22 @@ enum PreviewRenderer {
         write(render(MeetingResultView(document: sampleDoc).frame(width: 820, height: 600), dark: true),
               to: dir.appendingPathComponent("dark-3-meeting-result.png"))
 
+        // 대면 회의에서 목소리로 화자를 나눈 모습. 참석자 칸과 원문 탭의 "화자 N" 꼬리표를 본다.
+        var voiceDoc = sampleDoc
+        voiceDoc.segments = sampleSegments.enumerated().map { i, s in
+            Whisper.Segment(text: s.text, start: s.start, end: s.end, speaker: i % 3 == 1 ? "화자 2" : "화자 1")
+        }
+        voiceDoc.speakersKnown = true
+        write(render(MeetingResultView(document: voiceDoc, tab: .transcript).frame(width: 820, height: 600)),
+              to: dir.appendingPathComponent("3c-meeting-voice-speakers.png"))
+        write(render(MeetingResultView(document: voiceDoc).frame(width: 820, height: 600)),
+              to: dir.appendingPathComponent("3c-meeting-voice-speakers-info.png"))
+        var unknownDoc = sampleDoc
+        unknownDoc.segments = sampleSegments
+        unknownDoc.speakersKnown = false
+        write(render(MeetingResultView(document: unknownDoc).frame(width: 820, height: 600)),
+              to: dir.appendingPathComponent("3d-meeting-one-speaker.png"))
+
         let settings = SettingsModel()
         settings.usageContexts = [.devFrontend, .devMobile]
         settings.showOnboarding = true

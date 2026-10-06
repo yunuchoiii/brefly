@@ -10,11 +10,33 @@ struct MeetingDocument {
     let recordedAt: Date
     let duration: Double?
     var notes: String
-    let segments: [Whisper.Segment]
+    var segments: [Whisper.Segment]
     /// 받아 적은 원문. "다시 요약"이 이걸 다시 모델에 넘긴다 — 받아쓰기를 다시 돌리지 않는다.
     var transcript: String = ""
     /// 화자를 아는 녹음인지(화상 회의). 다시 요약할 때 프롬프트가 달라진다.
     var speakersKnown: Bool = false
+
+    /// 목소리로 가른 화자(`화자 1`…)와 말한 몫. 화상 회의(나/상대)는 비어 있다.
+    var voiceSpeakers: [(name: String, share: String)] {
+        var talk: [String: Double] = [:]
+        for s in segments {
+            guard let name = s.speaker, name.hasPrefix("화자 ") else { continue }
+            talk[name, default: 0] += max(0, s.end - s.start)
+        }
+        let total = talk.values.reduce(0, +)
+        guard total > 0 else { return [] }
+        return talk.keys.sorted { $0.localizedStandardCompare($1) == .orderedAscending }.map {
+            ($0, "말한 시간 \(Int((talk[$0]! / total * 100).rounded()))%")
+        }
+    }
+
+    /// 화자를 못 붙였을 때 그 까닭.
+    var diarizationNote: String {
+        if #available(macOS 14.0, *) {
+            return "누가 말했는지 나누지 않은 회의입니다. 목소리가 한 사람만 들리면 나누지 않습니다."
+        }
+        return "화자 나누기는 macOS 14 이상에서 됩니다."
+    }
     /// 요약이 실패한 채로 저장됐으면 그 까닭. 있으면 창 위에 띠와 '다시 요약'이 뜬다.
     var summaryFailed: String? = nil
     /// 어느 AI 가 뽑았는지. AUTO 는 회사를 오가므로 결과만 보고는 알 수 없다.
@@ -90,7 +112,7 @@ final class MeetingWindow: NSObject, NSWindowDelegate {
 
 struct MeetingResultView: View {
     @State var document: MeetingDocument
-    @State private var tab = Tab.notes
+    @State var tab = Tab.notes
     @State private var editing = false
     @State private var draft = ""
     @State private var toast: String?
@@ -392,7 +414,15 @@ struct MeetingResultView: View {
                 //    나중에 "참석자" 목록이 같은 자리에 들어가므로 화면을 갈아엎지 않는다.
                 VStack(alignment: .leading, spacing: 6) {
                     Text("참석자").font(.system(size: 11, weight: .bold)).foregroundColor(.text3)
-                    if document.speakersKnown {
+                    if !document.voiceSpeakers.isEmpty {
+                        // 대면·녹음 파일은 목소리로 갈랐다. 몇 명인지는 알지만 누구인지는 모른다.
+                        ForEach(document.voiceSpeakers, id: \.name) { s in
+                            infoRow(s.name, s.share)
+                        }
+                        Text("목소리로 나눈 것이라 짧은 말은 틀릴 수 있습니다.")
+                            .font(.system(size: 11)).foregroundColor(.text4)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if document.speakersKnown {
                         // 화상 회의는 트랙이 갈려 있어 내 쪽과 상대 쪽은 안다. 상대가 몇 명인지는 모른다.
                         infoRow("나", "이 맥의 마이크")
                         infoRow("상대", "스피커로 나온 소리")
@@ -400,7 +430,7 @@ struct MeetingResultView: View {
                             .font(.system(size: 11)).foregroundColor(.text4)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
-                        Text("누가 말했는지는 아직 구분하지 않습니다. 다음 버전에서 화자를 나누고 이름을 붙일 수 있습니다.")
+                        Text(document.diarizationNote)
                             .font(.system(size: 11)).foregroundColor(.text4)
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(10)
@@ -443,7 +473,8 @@ struct MeetingResultView: View {
                                 .background(speaker == "나" ? Color.paperSoft : Color.paper)
                                 .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.line, lineWidth: 1))
                                 .cornerRadius(5)
-                                .frame(width: 42, alignment: .leading)
+                                .fixedSize()
+                                .frame(width: 52, alignment: .leading)
                         }
                         Text(segment.text).font(.system(size: 12.5)).foregroundColor(.ink)
                             .fixedSize(horizontal: false, vertical: true)

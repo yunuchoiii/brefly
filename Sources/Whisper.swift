@@ -198,7 +198,7 @@ enum Whisper {
     }
 
     /// 어떤 소리 파일이든 16kHz 모노 실수 배열로 만든다. 이미 그 형식이면 그대로 읽는다.
-    private static func monoSamples(_ url: URL) throws -> [Float] {
+    static func monoSamples(_ url: URL) throws -> [Float] {
         guard let file = try? AVAudioFile(forReading: url) else { throw Failure.audioUnreadable(url) }
         let source = file.processingFormat
         guard let target = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1),

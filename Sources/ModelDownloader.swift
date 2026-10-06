@@ -68,7 +68,10 @@ final class ModelDownloader: NSObject {
         self.completion = nil
         self.onProgress = nil
         switch result {
-        case .success(let url): Log.write("받아쓰기 모델 준비됨 — \(url.path)")
+        case .success(let url):
+            Log.write("받아쓰기 모델 준비됨 — \(url.path)")
+            // 회의록을 쓰기로 한 사람이다. 화자 분리 모델(21MB)도 이어서 받아 둔다.
+            DiarizationModels.ensure()
         case .failure(let error): Log.write("받아쓰기 모델 실패 — \(error.localizedDescription)")
         }
         completion?(result)
