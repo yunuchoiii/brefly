@@ -252,6 +252,9 @@ enum PreviewRenderer {
         full("general", GeneralPane(model: settings))
         // '직접 추가'를 펼친 모습. 접혀 있으면 안쪽 설명을 확인할 길이 없다.
         full("usage-expanded", UsageContextSection(model: settings, startExpanded: true))
+        // 고치고 아직 저장 안 한 모습 — 저장 버튼이 진해지고 안내가 떠야 한다.
+        full("usage-unsaved", UsageContextSection(model: settings, startExpanded: true,
+                                                  draftGlossary: settings.glossary + "\n정헌님"))
         full("dictation", DictationPane(model: settings))
         full("meeting", MeetingPane(model: settings))
         full("ai", AIPane(model: settings))
