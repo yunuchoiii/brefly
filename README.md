@@ -169,6 +169,23 @@
 
 <br>
 
+## 만든 데 쓴 것
+
+Brefly 는 아래 오픈소스와 공개 모델 위에서 돌아갑니다. 고맙습니다.
+
+| 무엇 | 하는 일 | 라이선스 |
+|---|---|---|
+| [whisper.cpp](https://github.com/ggml-org/whisper.cpp) · Whisper large-v3-turbo | 회의록 받아쓰기 | MIT |
+| [Silero VAD](https://github.com/snakers4/silero-vad) | 말소리 구간 찾기 | MIT |
+| [FluidAudio](https://github.com/FluidInference/FluidAudio) | 화자 나누기 (CoreML 로 돌리는 코드) | Apache-2.0 |
+| [fastcluster](https://github.com/fastcluster/fastcluster) | 화자 나누기의 군집 계산 | BSD-2-Clause |
+| [speaker-diarization-coreml](https://huggingface.co/FluidInference/speaker-diarization-coreml) | 화자 나누기 모델 — [pyannote](https://github.com/pyannote/pyannote-audio) community-1, [WeSpeaker](https://github.com/wenet-e2e/wespeaker), [BUT Speech@FIT](https://github.com/BUTSpeechFIT/VBx) VBx, Fluid Inference 의 CoreML 변환 | CC-BY-4.0 |
+| [Sparkle](https://sparkle-project.org) | 자동 업데이트 | MIT |
+
+화자 나누기 모델은 앱에 넣지 않고 회의록을 처음 쓸 때 받습니다(약 21MB). 손댄 곳은 `vendor/FluidAudio/NOTICE.md` 에 적어 두었습니다.
+
+<br>
+
 ## 후원
 
 무료 앱입니다. 도움이 됐다면 커피 한 잔으로 응원해 주세요.
@@ -200,6 +217,7 @@ open build/Brefly.app       # 터미널에서 실행 파일을 직접 돌리면 
 build/Brefly.app/Contents/MacOS/Brefly --render-previews /tmp/previews   # 팝오버·설정 창 각 상태를 PNG 로
 build/Brefly.app/Contents/MacOS/Brefly --polish "어 그 테스트 입니다"      # 녹음 없이 정리만
 build/Brefly.app/Contents/MacOS/Brefly --check-update 0.1.0              # 업데이트 확인 판정
+build/Brefly.app/Contents/MacOS/Brefly --diarize 녹음.wav                # 받아쓰기 + 화자 나누기 (요약 안 함)
 tail -f ~/Library/Logs/Brefly.log                                        # "자동 모드: ○○ 채택 (n초)"
 ```
 
@@ -233,6 +251,10 @@ Sources/
   Paster.swift          클립보드 백업 → 주입 → ⌘V → 복원
   Prefs.swift           설정, API 키 파일, 이름 변경 이전
   Theme.swift           팔레트, 로고 벡터
+  MeetingNotes.swift    회의록: 받아쓰기(whisper) → 화자 나누기 → 요약
+  Diarizer.swift        목소리로 화자 나누기 (2명 이상일 때만 붙임)
+  DiarizationModels.swift  화자 나누기 모델 내려받기 (판 고정, 크기 검사)
+vendor/FluidAudio/      화자 나누기 (FluidAudio 의 오프라인 부분만, NOTICE.md 참고)
 ```
 
 동작 흐름:

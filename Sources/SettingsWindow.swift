@@ -826,6 +826,15 @@ struct UpdatesPane: View {
                             last: true) { EmptyView() }
             }
 
+            // CC-BY-4.0 모델(화자 나누기)은 출처를 사용자가 볼 수 있는 곳에 밝혀야 한다.
+            SettingsSection("만든 데 쓴 것") {
+                ActionRow("오픈소스와 공개 모델",
+                          "whisper.cpp · Silero VAD · Sparkle · FluidAudio · fastcluster, 화자 나누기 모델(pyannote · WeSpeaker · BUT Speech@FIT · Fluid Inference, CC-BY-4.0)을 씁니다.",
+                          buttonTitle: "보기", action: {
+                    if let url = URL(string: "https://github.com/yunuchoiii/brefly#%EB%A7%8C%EB%93%A0-%EB%8D%B0-%EC%93%B4-%EA%B2%83") { NSWorkspace.shared.open(url) }
+                }, last: true)
+            }
+
             SettingsSection("후원") {
                 ActionRow("커피 한 잔으로 응원하기", "Brefly 는 무료입니다. 도움이 됐다면 GitHub Sponsors 로 응원해 주세요.",
                           buttonTitle: "열기", action: {
