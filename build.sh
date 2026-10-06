@@ -88,6 +88,14 @@ mkdir -p "$APP/Contents/Frameworks"
 rm -rf "$APP/Contents/Frameworks/Sparkle.framework"
 cp -R "$DIR/vendor/Sparkle.framework" "$APP/Contents/Frameworks/"
 
+# --- 화자 분리 군집 계산(C++) -----------------------------------------------
+# fastcluster 를 C 로 감싼 것(FluidAudio). swiftc 는 C++ 을 못 다루므로 먼저 목적 파일로 만든다.
+FC_OBJ="$DIR/build/fastcluster.o"
+mkdir -p "$DIR/build"
+clang++ -std=c++17 -O2 -target "$TARGET" \
+  -I"$DIR/vendor/FluidAudio/FastClusterWrapper/include" \
+  -c "$DIR/vendor/FluidAudio/FastClusterWrapper/FastClusterWrapper.cpp" -o "$FC_OBJ"
+
 # --- 컴파일 ---------------------------------------------------------------
 echo "▶ 컴파일 중…"
 swiftc \
@@ -106,6 +114,8 @@ swiftc \
   -Xlinker -weak_framework -Xlinker FoundationModels \
   -F "$DIR/vendor" -framework Sparkle \
   -Xcc -I"$DIR/vendor/whisper/include" \
+  -Xcc -I"$DIR/vendor/FluidAudio/FastClusterWrapper/include" \
+  -framework CoreML \
   -import-objc-header "$DIR/vendor/whisper/bridge.h" \
   -L"$DIR/vendor/whisper/lib" \
   -lwhisper -lparakeet -lggml -lggml-base -lggml-cpu -lggml-metal -lggml-blas \
@@ -115,7 +125,9 @@ swiftc \
   -framework Accelerate \
   -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
   -o "$APP/Contents/MacOS/Brefly" \
-  "$DIR/Sources/"*.swift
+  "$FC_OBJ" \
+  "$DIR/Sources/"*.swift \
+  $(find "$DIR/vendor/FluidAudio" -name "*.swift")
 
 # --- 앱 아이콘 -------------------------------------------------------------
 # 로고를 코드로 그리므로 별도 이미지 파일 없이 바이너리가 iconset 을 만들고 iconutil 로 묶는다.

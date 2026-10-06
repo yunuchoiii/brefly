@@ -3,3 +3,6 @@
 // whisper.cpp 는 순수 C 라 헤더 하나만 읽히면 된다.
 #include "ggml-backend.h"
 #include "whisper.h"
+
+// 화자 분리의 군집 계산(fastcluster, C++)을 C 로 감싼 것. `vendor/FluidAudio/FastClusterWrapper`.
+#include "FastClusterWrapper.h"
