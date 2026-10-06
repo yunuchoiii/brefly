@@ -1339,11 +1339,35 @@ struct UsageContextSection: View {
     /// 접혀 있으면 `--render-previews` 가 안쪽을 영영 못 찍는다.
     var startExpanded = false
     @State private var showExtras: Bool
+    /// 내 소개·추가 용어의 **고치는 중인** 글. '저장'을 눌러야 설정에 들어간다.
+    ///
+    /// ⚠️ 전에는 한 글자 칠 때마다 저장됐다. 저장은 되는데 그걸 알려 주는 것이 없어서, 고친 뒤에
+    ///    된 건지 안 된 건지 알 수 없었다(2026-10-06). 눌러서 저장하고, 저장했다고 보여 준다.
+    @State private var noteDraft: String
+    @State private var glossaryDraft: String
+    @State private var justSaved = false
+    /// 시안으로 그린 것인가. 그렇다면 **절대 저장하지 않는다** — 시안이 사용자의 실제 용어를 덮어쓰면 안 된다.
+    private let isPreview: Bool
 
-    init(model: SettingsModel, startExpanded: Bool = false) {
+    /// - Parameter draftGlossary: 시안 전용. 고치는 중인 모습을 그리려고 둔다.
+    init(model: SettingsModel, startExpanded: Bool = false, draftGlossary: String? = nil) {
         self.model = model
         self.startExpanded = startExpanded
         _showExtras = State(initialValue: startExpanded)
+        _noteDraft = State(initialValue: model.speakerNote)
+        _glossaryDraft = State(initialValue: draftGlossary ?? model.glossary)
+        isPreview = draftGlossary != nil
+    }
+
+    private var hasUnsaved: Bool {
+        noteDraft != model.speakerNote || glossaryDraft != model.glossary
+    }
+
+    private func saveExtras() {
+        model.speakerNote = noteDraft
+        model.glossary = glossaryDraft
+        justSaved = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { justSaved = false }
     }
 
     private let columns = [GridItem(.flexible()), GridItem(.flexible())]
@@ -1424,7 +1448,7 @@ struct UsageContextSection: View {
                         Text("내 소개 (선택)").font(.system(size: 12, weight: .semibold)).foregroundColor(.ink)
                         Text("예) 시큐어로그에서 SCSM 이라는 사내 솔루션을 만듭니다.")
                             .font(.system(size: 11)).foregroundColor(.text3)
-                        TextEditor(text: $model.speakerNote)
+                        TextEditor(text: $noteDraft)
                             .font(.system(size: 12)).frame(height: 48)
                             .padding(6).background(Color.fill).cornerRadius(7)
                             .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.lineStrong, lineWidth: 1))
@@ -1443,14 +1467,29 @@ struct UsageContextSection: View {
                             Text("잘못 들린 적이 있으면 화살표로, 아직 없으면 단어만 적습니다.")
                         }
                         .font(.system(size: 11)).foregroundColor(.text3)
-                        TextEditor(text: $model.glossary)
+                        TextEditor(text: $glossaryDraft)
                             .font(.system(size: 12, design: .monospaced)).frame(height: 90)
                             .padding(6).background(Color.fill).cornerRadius(7)
                             .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.lineStrong, lineWidth: 1))
                     }
+                    // 내 소개와 추가 용어를 한 번에 저장한다. 바꾼 게 없으면 누를 수 없다.
+                    HStack(spacing: 10) {
+                        Spacer()
+                        if justSaved {
+                            Label("저장했습니다", systemImage: "checkmark.circle.fill")
+                                .font(.system(size: 11.5, weight: .semibold)).foregroundColor(.green)
+                        } else if hasUnsaved {
+                            Text("저장하지 않은 내용이 있습니다").font(.system(size: 11)).foregroundColor(.text3)
+                        }
+                        SmallButton("저장", filled: hasUnsaved, action: saveExtras)
+                            .disabled(!hasUnsaved)
+                            .opacity(hasUnsaved ? 1 : 0.45)
+                    }
                 }
             }
             .padding(14)
+            // ⚠️ 저장을 안 누르고 창을 닫아도 **버리지 않는다.** 적어 둔 용어를 잃는 것이 더 나쁘다.
+            .onDisappear { if hasUnsaved && !isPreview { saveExtras() } }
         }
     }
 }
