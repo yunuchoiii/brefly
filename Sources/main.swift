@@ -371,6 +371,10 @@ if let i = CommandLine.arguments.firstIndex(of: "--whisper"), i + 1 < CommandLin
         }
         let out = "/tmp/brefly-whisper.txt"
         try? text.write(toFile: out, atomically: true, encoding: .utf8)
+        // 시각이 붙은 구간도 남긴다 — 화자 분리 결과와 시각으로 겹쳐 맞춰 볼 때 쓴다.
+        let tsv = segments.map { String(format: "%.2f\t%.2f\t", $0.start, $0.end) + $0.text }
+            .joined(separator: "\n")
+        try? tsv.write(toFile: "/tmp/brefly-whisper.tsv", atomically: true, encoding: .utf8)
         print("전문: \(out)")
     } catch {
         print("FAIL \(error.localizedDescription)")
