@@ -138,13 +138,10 @@ final class MeetingRecorder {
         //       다시 켜지 말 것. 대신 **글자 단계에서 겹치는 말을 걸러낸다** — 마이크에 섞인 에코는
         //       같은 시각 시스템 트랙에 있는 것과 같은 말이므로, 시간으로 맞춰 빼면 된다.
         //       그쪽이 오디오 API 와 씨름하는 것보다 확실하고 하드웨어를 안 탄다.
-        let format = input.inputFormat(forBus: 0)
-        input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
-            self?.micTrack?.write(buffer)
-            self?.note(peak: Self.peak(of: buffer), isMic: true)
-        }
+        installMicTap(format: input.inputFormat(forBus: 0))
         engine.prepare()
         try engine.start()
+        observeDeviceChanges()
 
         // 시스템 소리는 실패해도 회의를 접지 않는다. 대면 회의라면 애초에 필요 없다.
         if captureSystem {
@@ -167,9 +164,84 @@ final class MeetingRecorder {
         return session
     }
 
+    // MARK: - 입력 장치가 바뀔 때
+
+    /// 녹음 도중 장치가 바뀐 때(이 시각부터 소리가 안 들어왔다). 다시 들어오면 그 사이를 무음으로 채운다.
+    private var micGapStartedAt: Date?
+    private let gapLock = NSLock()
+    private var configObserver: NSObjectProtocol?
+    /// 장치가 바뀐 횟수. 회의가 끝난 뒤 로그로 남긴다.
+    private(set) var deviceChanges = 0
+
+    private func installMicTap(format: AVAudioFormat) {
+        engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
+            guard let self else { return }
+            self.padGapIfNeeded(format: buffer.format)
+            self.micTrack?.write(buffer)
+            self.note(peak: Self.peak(of: buffer), isMic: true)
+        }
+    }
+
+    /// 녹음 중에 입력 장치가 바뀌면(에어팟을 끼거나 빼기, 블루투스 헤드셋 자동 연결, USB 마이크·모니터 꽂기)
+    /// `AVAudioEngine` 은 **말없이 멈춘다.** 탭에 소리가 더 안 들어오고, 화면은 계속 녹음 중으로 보인다.
+    ///
+    /// ⚠️ 받아쓰기(`SpeechRecorder`)에는 이 처리가 있었는데 회의 녹음에는 없었다. 받아쓰기는 몇 초짜리라
+    ///    거의 안 겪지만, 2시간 회의라면 그 사이에 에어팟이 한 번 붙는 것만으로 나머지가 통째로 빈다.
+    private func observeDeviceChanges() {
+        configObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+        ) { [weak self] _ in
+            self?.restartAfterDeviceChange()
+        }
+    }
+
+    private func restartAfterDeviceChange() {
+        guard session != nil else { return }
+        deviceChanges += 1
+        gapLock.lock()
+        if micGapStartedAt == nil { micGapStartedAt = Date() }
+        gapLock.unlock()
+
+        let input = engine.inputNode
+        input.removeTap(onBus: 0)
+        engine.stop()
+        let format = input.inputFormat(forBus: 0)
+        Log.write("회의 녹음: 입력 장치 변경 — \(format.sampleRate)Hz \(format.channelCount)ch 로 이어서 녹음")
+        // 마이크가 하나도 없는 순간(빼는 도중)이면 형식이 비어 있다. 장치가 다시 잡히면 알림이 또 온다.
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            Log.write("⚠️ 회의 녹음: 새 입력 장치가 아직 없다 — 다음 장치 변경을 기다린다")
+            return
+        }
+        installMicTap(format: format)
+        engine.prepare()
+        do {
+            try engine.start()
+        } catch {
+            Log.write("⚠️ 회의 녹음: 장치 변경 뒤 다시 시작 실패 — \(error.localizedDescription)")
+        }
+    }
+
+    /// 끊긴 동안을 무음으로 채운다. 안 채우면 마이크 파일이 실제 시각보다 짧아져서,
+    /// 그 뒤의 말이 전부 앞당겨진다 — 화상 회의는 시스템 트랙과 시각이 어긋나 에코를 못 거르고,
+    /// 하이라이트(실제 시각 기준)도 엉뚱한 말을 짚는다.
+    private func padGapIfNeeded(format: AVAudioFormat) {
+        gapLock.lock()
+        let started = micGapStartedAt
+        micGapStartedAt = nil
+        gapLock.unlock()
+        guard let started else { return }
+        let seconds = Date().timeIntervalSince(started)
+        micTrack?.writeSilence(seconds: seconds)
+        Log.write("회의 녹음: 끊긴 \(String(format: "%.1f", seconds))초를 무음으로 채움")
+    }
+
     @discardableResult
     func stop() async -> Session? {
         guard let session else { return nil }
+        if let o = configObserver { NotificationCenter.default.removeObserver(o) }
+        configObserver = nil
+        if deviceChanges > 0 { Log.write("회의 녹음 중 입력 장치가 \(deviceChanges)번 바뀌었다") }
+        deviceChanges = 0
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         await systemAudio.stop()
@@ -271,6 +343,21 @@ private final class TrackWriter {
             written += 1
         } catch {
             Log.write("회의 녹음 쓰기 실패: \(error.localizedDescription)")
+        }
+    }
+
+    /// 무음을 이어 쓴다. 장치가 바뀌어 끊긴 동안을 메운다.
+    func writeSilence(seconds: Double) {
+        var remaining = AVAudioFrameCount(max(0, seconds) * target.sampleRate)
+        while remaining > 0 {
+            let n = min(remaining, 16_000)
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: n) else { return }
+            buffer.frameLength = n   // 새 버퍼는 0 으로 차 있다
+            do { try file.write(from: buffer) } catch {
+                Log.write("회의 녹음 무음 쓰기 실패: \(error.localizedDescription)")
+                return
+            }
+            remaining -= n
         }
     }
 

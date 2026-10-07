@@ -200,7 +200,10 @@ struct MeetingResultView: View {
             }
             Spacer()
             OutlineButton("Finder에서 보기", wide: false) {
-                NSWorkspace.shared.activateFileViewerSelecting([document.notesFile])
+                // 녹음도 같이 집어 준다. 앱 안에 재생기를 두지 않는다 — 꺼내 쓰는 길만 있으면 된다.
+                // 직접 녹음한 회의는 숨은 라이브러리 폴더 안이라, 이 버튼 말고는 찾아갈 길이 없다.
+                let audio = FileManager.default.fileExists(atPath: document.audio.path) ? [document.audio] : []
+                NSWorkspace.shared.activateFileViewerSelecting([document.notesFile] + audio)
             }
         }
         .padding(.horizontal, 20).padding(.vertical, 16)
