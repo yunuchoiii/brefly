@@ -673,7 +673,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // 설치하면 앱이 꺼졌다 켜진다. 하던 일이 있으면 끝날 때까지 미룬다.
         Updater.reportBusy { [weak self] in
             guard let self else { return false }
-            return self.isMakingMeetingNotes || self.recorder.isRunning
+            // ⚠️ 회의 **녹음**도 넣는다. 전에는 빠져 있어서 녹음 중에 "설치"를 누르면 앱이 다시 켜지며
+            //    녹음이 끊겼다(2026-10-07 에 코드를 읽다 찾았다. 실제로 겪은 사람은 없다).
+            return self.isMakingMeetingNotes || self.recorder.isRunning || self.meetingRecorder != nil
         }
         registerHotKey()
         Log.write("실행 경로: \(Bundle.main.bundlePath)")
@@ -697,6 +699,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         // 새 버전 확인은 실행 직후 소란스럽지 않게 조금 뒤에. 이후 주기는 Sparkle 이 관리한다.
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { Updater.start() }
+        // 지난번에 회의록을 만들다 꺼졌으면 이어서 만들지 묻는다.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.offerUnfinishedMeeting() }
 
         // 기본값은 클립보드 복사이므로 권한을 요구하지 않는다.
         // 자동 붙여넣기를 켠 사용자에게만 안내한다.
@@ -2428,6 +2432,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }, onTranscript: { transcript, _ in
             Self.dropTranscript(transcript, beside: folder.appendingPathComponent("x"))
         }, completion: { [weak self] result in
+            // 결과가 무엇이든 처리는 끝까지 갔다. 다음에 켤 때 "이어서 만들까요?"를 묻지 않게 한다.
+            MeetingRecovery.markFinished(folder)
             guard let self else { return }
             DispatchQueue.main.async {
                 self.isMakingMeetingNotes = false
@@ -2452,6 +2458,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 }
             }
         })
+    }
+
+    // MARK: 끊긴 회의록 이어서 만들기
+
+    /// 녹음은 끝났는데 회의록이 안 나온 회의가 있으면 이어서 만들지 묻는다(`MeetingRecovery`).
+    /// 한 번에 하나만 묻는다. 나머지는 이걸 만든 뒤 다음에 앱을 켤 때 묻는다.
+    private func offerUnfinishedMeeting() {
+        guard !isMakingMeetingNotes, meetingRecorder == nil, ModelStore.hasTranscriptionModel else { return }
+        let list = MeetingRecovery.find()
+        guard let meeting = list.first else { return }
+        Log.write("끊긴 회의록 발견 — \(meeting.folder.lastPathComponent) (\(Int(meeting.seconds))초), 모두 \(list.count)개")
+
+        let when = DateFormatter()
+        when.locale = Locale(identifier: "ko_KR")
+        when.dateFormat = "M월 d일 a h시 m분"
+        let minutes = Int((meeting.seconds / 60).rounded())
+        let length = minutes >= 60 ? "\(minutes / 60)시간 \(minutes % 60)분" : "\(max(minutes, 1))분"
+        let alert = NSAlert()
+        alert.messageText = "회의록을 다 만들지 못한 녹음이 있습니다"
+        alert.informativeText = "\(when.string(from: meeting.startedAt))에 시작한 회의(\(length))입니다. "
+            + "회의록을 만드는 도중에 앱이 꺼졌습니다.\n\n"
+            + "녹음은 그대로 남아 있습니다. 이어서 만들면 처음부터 다시 받아 적습니다"
+            + (minutes >= 30 ? "(몇 분 걸립니다)." : ".")
+            + (list.count > 1 ? "\n\n다른 녹음 \(list.count - 1)개는 다음에 앱을 켤 때 묻습니다." : "")
+        alert.addButton(withTitle: "이어서 만들기")
+        alert.addButton(withTitle: "나중에")
+        alert.addButton(withTitle: "묻지 않기")
+        NSApp.activate(ignoringOtherApps: true)
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            Log.write("끊긴 회의록 이어서 만들기 — \(meeting.folder.lastPathComponent)")
+            meetingKind = meeting.system == nil ? .inPerson : .videoCall
+            makeMeetingNotesFromTracks(mic: meeting.mic, system: meeting.system,
+                                       recordedAt: meeting.startedAt, folder: meeting.folder)
+            showPopover()
+        case .alertThirdButtonReturn:
+            // 녹음은 지우지 않는다. 다시 묻지만 않는다.
+            MeetingRecovery.dismiss(meeting.folder)
+            Log.write("끊긴 회의록 묻지 않기 — \(meeting.folder.lastPathComponent)")
+        default:
+            break
+        }
     }
 
     // MARK: 녹음 파일로 회의록 만들기
@@ -2965,5 +3013,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     @objc private func quitApp() {
         NSApp.terminate(nil)
+    }
+
+    /// 회의를 녹음하거나 회의록을 만드는 중에 종료를 누르면 한 번 묻는다.
+    /// 메뉴의 종료, ⌘Q, Dock 의 종료가 모두 여기를 지난다.
+    ///
+    /// ⚠️ 녹음 중에 끄기로 하면 녹음을 **제대로 닫고** 끈다. 그냥 끄면 WAV 머리의 길이 칸이
+    ///    안 써져서 파일이 안 열린다(`MeetingRecovery.repairHeaderIfNeeded` 가 고치긴 한다).
+    ///    닫아 둔 녹음은 다음에 켤 때 "이어서 만들까요?"로 회의록을 만든다.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let recording = meetingRecorder
+        guard recording != nil || isMakingMeetingNotes else { return .terminateNow }
+
+        let alert = NSAlert()
+        if recording != nil {
+            alert.messageText = "회의를 녹음하는 중입니다"
+            alert.informativeText = "종료하면 녹음이 여기서 끝납니다. 녹음한 데까지는 남아 있어, "
+                + "다음에 앱을 켤 때 회의록을 이어서 만들 수 있습니다."
+        } else {
+            alert.messageText = "회의록을 만드는 중입니다"
+            alert.informativeText = "종료하면 회의록 만들기가 멈춥니다. 녹음은 남아 있어, "
+                + "다음에 앱을 켤 때 처음부터 다시 만들 수 있습니다."
+        }
+        // 기본 단추(Return)는 '계속'이다. 실수로 누른 종료를 Return 한 번에 확정하지 않게 한다.
+        alert.addButton(withTitle: "계속하기")
+        alert.addButton(withTitle: "종료")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertSecondButtonReturn else {
+            Log.write("종료 취소 — 하던 일을 계속한다")
+            return .terminateCancel
+        }
+        guard let recording else {
+            Log.write("회의록을 만드는 중에 종료")
+            return .terminateNow
+        }
+        Log.write("회의 녹음 중에 종료 — 녹음을 닫고 끈다")
+        Task { @MainActor in
+            _ = await recording.stop()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 }
