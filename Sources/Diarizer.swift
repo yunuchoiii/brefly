@@ -114,20 +114,4 @@ enum Diarizer {
     private static func distance(_ time: Double, _ turn: Turn) -> Double {
         time < turn.start ? turn.start - time : (time > turn.end ? time - turn.end : 0)
     }
-
-    /// 모델에 넘길 글. 같은 사람이 잇달아 말한 구간은 한 줄로 묶는다.
-    static func transcript(_ labelled: [Whisper.Segment]) -> String {
-        var lines: [(speaker: String, text: String)] = []
-        for s in labelled {
-            let speaker = s.speaker ?? ""
-            let text = s.text.trimmingCharacters(in: .whitespaces)
-            guard !text.isEmpty else { continue }
-            if let last = lines.last, last.speaker == speaker {
-                lines[lines.count - 1].text += " " + text
-            } else {
-                lines.append((speaker, text))
-            }
-        }
-        return lines.map { "\($0.speaker): \($0.text)" }.joined(separator: "\n")
-    }
 }

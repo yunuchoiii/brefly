@@ -77,7 +77,7 @@ enum MeetingNotes {
     /// 화자를 아는 경우에 앞에 덧붙이는 말. 직접 녹음하면 마이크=나, 시스템 소리=상대로
     /// 채널이 갈려 있어서 누가 말했는지 안다. 그때는 "추측하지 말라"가 오히려 방해가 된다.
     private static func speakerNote(for transcript: String) -> String {
-        transcript.range(of: #"(^|\n)화자 \d+:"#, options: .regularExpression) != nil
+        transcript.range(of: #"(^|\n)(\[[\d:]+\] )?화자 \d+:"#, options: .regularExpression) != nil
             ? voiceSpeakerNote : trackSpeakerNote
     }
 
@@ -112,6 +112,18 @@ enum MeetingNotes {
         - 담당자와 마감은 원문에서 말한 것만 적는다. 없으면 그 항목을 비운다.
         - "누가 말했는지"는 알 수 없다. 화자를 추측해 적지 않는다.
         - 받아쓰기라 잘못 들린 낱말이 섞여 있다. 앞뒤로 뜻이 통하는 쪽으로 읽되, 확신이 없으면 그대로 둔다.
+        - 같은 제품·시스템·회사 이름이 잘못 들려 여러 꼴로 적혀 있을 수 있다(글자 한두 개만 다른 영문 약자 등).
+          가장 자주 나온 꼴 하나로 통일해 쓴다.
+        - 사람 이름도 잘못 들린다. 원문에 **한 번만** 나오는 낯선 이름은 담당자로 쓰지 않는다.
+        - 각 줄 앞의 [12:30] 은 녹음 시작부터 흐른 시각이다.
+
+        읽을 때 가를 것:
+        - **결정**은 이번 회의에서 새로 합의한 것이다. "지금 이미 그렇게 돌고 있다"는 설명, 한 사람의
+          희망이나 제안, "검토해 봐야 한다"는 결정이 아니다.
+        - "~해야 한다", "정해야 한다", "확인해 보겠다", "알려 드리겠다", "보내 주시면 좋겠다"는 **할 일**이다.
+          결론이 안 난 채 넘어간 것도 정해야 할 것으로 할 일에 적는다.
+        - 논의 끝에 "~하면 될 것 같다", "~까지는 안 해도 될 것 같다", "제일 중요한 건 ~다"처럼 정리한 말이
+          그 주제의 **결론**이다. 이걸 놓치면 회의록이 뜻을 잃는다.
 
         다음 차례로 쓴다. 해당하는 내용이 없는 항목은 통째로 뺀다.
 
@@ -164,6 +176,11 @@ enum MeetingNotes {
 
             ## 다음에 볼 것
             - 다음 회의나 후속으로 넘긴 것.
+
+            ## 주제별 정리
+            - 회의를 처음부터 끝까지 주제가 바뀔 때마다 나눠 훑는다. 한 주제도 빠뜨리지 않는다.
+            - 꼴: "**[시작 시각] 주제 이름**" 줄 다음에 핵심 1~3개를 하위 불릿으로. 결론이 났으면 결론을 먼저.
+            - 시각은 원문 줄 앞의 [시각]을 그대로 옮긴다. 지어내지 않는다.
             """
         case .detailed:
             body = """
@@ -174,6 +191,11 @@ enum MeetingNotes {
 
             ## 다음에 볼 것
             - 다음 회의나 후속으로 넘긴 것.
+
+            ## 주제별 정리
+            - 회의를 처음부터 끝까지 주제가 바뀔 때마다 나눠 훑는다. 한 주제도 빠뜨리지 않는다.
+            - 꼴: "**[시작 시각] 주제 이름**" 줄 다음에 핵심 1~3개를 하위 불릿으로. 결론이 났으면 결론을 먼저.
+            - 시각은 원문 줄 앞의 [시각]을 그대로 옮긴다. 지어내지 않는다.
 
             이 단계에서는 **개수를 줄이지 않는다.** 원문에서 오간 숫자·날짜·금액·이름·제품명을
             빠뜨리지 말고 그대로 적는다.
@@ -190,8 +212,10 @@ enum MeetingNotes {
             ## 다음에 볼 것
             - 다음 회의나 후속으로 넘긴 것.
 
-            ## 회의 흐름
-            - 이야기가 오간 차례를 처음부터 끝까지 훑는다. 주제가 바뀐 자리마다 한 불릿.
+            ## 주제별 정리
+            - 회의를 처음부터 끝까지 주제가 바뀔 때마다 나눠 훑는다. 한 주제도 빠뜨리지 않는다.
+            - 꼴: "**[시작 시각] 주제 이름**" 줄 다음에 핵심을 빠짐없이를 하위 불릿으로. 결론이 났으면 결론을 먼저.
+            - 시각은 원문 줄 앞의 [시각]을 그대로 옮긴다. 지어내지 않는다.
             - 원문에서 쓴 표현을 되도록 그대로 쓴다. 바꿔 말하면 뜻이 틀어진다.
 
             이 단계에서는 **개수를 줄이지 않는다.** 원문에서 오간 숫자·날짜·금액·이름·제품명을
@@ -228,6 +252,53 @@ enum MeetingNotes {
             guard let fraction else { return stage.title }
             return "\(stage.title) \(Int(fraction * 100))%"
         }
+    }
+
+    // MARK: - 모델에 넘길 원문
+
+    /// 맞장구만 있는 조각. 원문 화면에는 남기고 모델에는 안 넘긴다.
+    private static let backchannels: Set<String> = [
+        "네", "예", "아 네", "아네", "네네", "네 네", "예예", "아 예", "음", "어", "아", "응", "그렇죠", "맞아요",
+    ]
+
+    /// 받아쓴 구간을 모델에 넘길 글로 엮는다. 화면에 보여 줄 구간(`segments`)은 그대로 둔다.
+    ///
+    /// - 말차례마다 `[12:30]` 시각을 붙인다. 70분 회의를 "시간대별 주제"로 훑게 하려면 모델이
+    ///   어디쯤인지 알아야 한다. 화자를 모르면 1분마다 줄을 바꾼다.
+    /// - whisper 가 말이 오가는 대목에 붙이는 "- " 토막 표시를 걷는다.
+    /// - "네.", "예." 같은 맞장구만 있는 조각을 뺀다. 2026-10-08 70분 회의는 이런 조각이 줄마다 깔려
+    ///   내용이 토막 났고, 모델이 빈 곳을 짐작으로 메우다 뜻을 뒤집었다.
+    static func modelTranscript(_ segments: [Whisper.Segment]) -> String {
+        func clean(_ text: String) -> String {
+            text.replacingOccurrences(of: #"(^|\s)-\s*"#, with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespaces)
+        }
+        func isBackchannel(_ text: String) -> Bool {
+            let bare = text.filter { !$0.isPunctuation }.trimmingCharacters(in: .whitespaces)
+            return bare.isEmpty || backchannels.contains(bare)
+        }
+        func stamp(_ t: Double) -> String {
+            let s = Int(t)
+            return s >= 3600 ? String(format: "[%d:%02d:%02d]", s / 3600, s / 60 % 60, s % 60)
+                             : String(format: "[%02d:%02d]", s / 60, s % 60)
+        }
+        var lines: [(start: Double, speaker: String?, text: String)] = []
+        for segment in segments {
+            // 한 구간 안에도 "- 네. - 그래서 …" 처럼 맞장구가 섞여 있다. 조각마다 본다.
+            let pieces = segment.text.components(separatedBy: " - ")
+                .map(clean).filter { !isBackchannel($0) }
+            guard !pieces.isEmpty else { continue }
+            let text = pieces.joined(separator: " ")
+            if let last = lines.last, last.speaker == segment.speaker,
+               segment.speaker != nil || segment.start - last.start < 60 {
+                lines[lines.count - 1].text += " " + text
+            } else {
+                lines.append((segment.start, segment.speaker, text))
+            }
+        }
+        return lines.map { line in
+            "\(stamp(line.start)) " + (line.speaker.map { "\($0): " } ?? "") + line.text
+        }.joined(separator: "\n")
     }
 
     // MARK: - 한 줄로 엮기
@@ -270,7 +341,7 @@ enum MeetingNotes {
             // 목소리로 화자를 가른다. 2명 이상일 때만 붙고, 아니면 지금처럼 화자 없이 간다.
             let speakers = Diarizer.label(segments, audio: audio)
             let shown = speakers ?? segments
-            let text = speakers.map { Glossary.apply(to: Diarizer.transcript($0)) } ?? transcript
+            let text = Glossary.apply(to: modelTranscript(shown))
             // 여기서 원문을 넘긴다. 요약 전이다 — 이 뒤로는 요약이 어떻게 되든 안 잃는다.
             onTranscript?(text, shown)
             onProgress(Progress(stage: .summarizing, fraction: nil))
@@ -422,10 +493,7 @@ enum MeetingNotes {
                 // 말이 없는 녹음엔 돌리지 않는다 — 아래에서 어차피 버린다.
                 let voiceSpeakers = hasSystem || isNoSpeech(merged, segments: shown)
                     ? nil : Diarizer.label(micSegments, audio: mic)
-                if let voiceSpeakers {
-                    shown = voiceSpeakers
-                    merged = Glossary.apply(to: Diarizer.transcript(voiceSpeakers))
-                }
+                if let voiceSpeakers { shown = voiceSpeakers }
                 // ⚠️ `make` 와 **따로** 건다. 두 구현이 나뉘어 있어서, 한쪽에만 넣으면 실제
                 //    회의 녹음(이쪽)은 그냥 지나간다. 2026-10-01 에 한 번 그랬다.
                 guard !isNoSpeech(merged, segments: shown) else {
@@ -433,6 +501,7 @@ enum MeetingNotes {
                     completion(.failure(Failure.noSpeech))
                     return
                 }
+                merged = Glossary.apply(to: modelTranscript(shown))
                 onTranscript?(merged, shown)
                 onProgress(Progress(stage: .summarizing, fraction: nil))
                 let summarizeStarted = Date()
@@ -653,7 +722,9 @@ enum MeetingNotes {
             "generationConfig": [
                 "temperature": 0.2,
                 // 회의록은 길다. 받아쓰기 쪽 2048 로는 표가 중간에 끊긴다.
-                "maxOutputTokens": 8192,
+                // ⚠️ 8192 로도 끊겼다(2026-10-08, 70분 회의에 '주제별 정리'를 붙이자 첫 항목에서 잘림).
+                //    3.x 모델은 생각에 먼저 토큰을 쓰고 그것도 이 한도에서 깎인다. 쓴 만큼만 청구되니 크게 둔다.
+                "maxOutputTokens": 32768,
             ],
         ]
         var request = URLRequest(url: url)

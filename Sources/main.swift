@@ -399,7 +399,7 @@ if let i = CommandLine.arguments.firstIndex(of: "--diarize"), i + 1 < CommandLin
                                               vadModel: ModelStore.vadModel)
         print("받아쓰기 \(String(format: "%.1f", Date().timeIntervalSince(started)))초, 구간 \(segments.count)개")
         if let labelled = Diarizer.label(segments, audio: audio) {
-            print(Diarizer.transcript(labelled))
+            print(MeetingNotes.modelTranscript(labelled))
         } else {
             print("화자 2명 미만 — 붙이지 않음")
         }
