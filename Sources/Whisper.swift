@@ -81,9 +81,21 @@ enum Whisper {
         static let legacy = Guards(noContext: false, temperatureInc: 0.2, entropyThreshold: 2.4)
     }
 
+    /// 정확도 손잡이. 기본값은 지금까지 쓰던 것(greedy, whisper.cpp 의 VAD 기본값)이다.
+    struct Tuning {
+        /// nil 이면 greedy. 숫자면 그 폭으로 beam search 한다.
+        var beamSize: Int? = nil
+        /// 말소리 구간 앞뒤에 덧붙이는 여유(ms). nil 이면 whisper.cpp 기본값(30ms).
+        var vadPadMs: Int? = nil
+        /// 이만큼 조용해야 말이 끝난 것으로 본다(ms). nil 이면 기본값(100ms).
+        var vadMinSilenceMs: Int? = nil
+        static let `default` = Tuning()
+    }
+
     static func transcribe(audio: URL, model: URL, language: String = "ko",
                            threads: Int32 = 8,
                            guards: Guards = .default,
+                           tuning: Tuning = .default,
                            vadModel: URL? = nil,
                            cancel: CancelToken? = nil,
                            onProgress: ((Double) -> Void)? = nil) throws -> [Segment] {
@@ -99,7 +111,9 @@ enum Whisper {
         }
         defer { whisper_free(context) }
 
-        var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
+        var params = whisper_full_default_params(tuning.beamSize == nil ? WHISPER_SAMPLING_GREEDY
+                                                                         : WHISPER_SAMPLING_BEAM_SEARCH)
+        if let beam = tuning.beamSize { params.beam_search.beam_size = Int32(beam) }
         params.print_progress = false
         params.print_realtime = false
         params.print_timestamps = false
@@ -141,6 +155,8 @@ enum Whisper {
         if vadModel != nil {
             params.vad = true
             params.vad_params = whisper_vad_default_params()
+            if let pad = tuning.vadPadMs { params.vad_params.speech_pad_ms = Int32(pad) }
+            if let silence = tuning.vadMinSilenceMs { params.vad_params.min_silence_duration_ms = Int32(silence) }
         }
         Log.write("받아쓰기 시작 — \(audio.lastPathComponent), VAD \(vadModel == nil ? "끔(모델 없음)" : "켬")")
         return try vadPath.withCString { vadPointer in

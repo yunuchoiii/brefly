@@ -351,7 +351,7 @@ if let i = CommandLine.arguments.firstIndex(of: "--whisper"), i + 1 < CommandLin
                 $0 + 1 < CommandLine.arguments.count ? Float(CommandLine.arguments[$0 + 1]) : nil
             }
         }
-        var guards = Whisper.Guards.legacy
+        var guards = Whisper.Guards.default
         if CommandLine.arguments.contains("--no-context") { guards.noContext = true }
         if let t = num("--temp-inc") { guards.temperatureInc = t }
         if let e = num("--entropy") { guards.entropyThreshold = e }
@@ -361,8 +361,13 @@ if let i = CommandLine.arguments.firstIndex(of: "--whisper"), i + 1 < CommandLin
             j + 1 < CommandLine.arguments.count ? URL(fileURLWithPath: CommandLine.arguments[j + 1]) : nil
         }
         if let vad { print("VAD: \(vad.lastPathComponent)") }
+        var tuning = Whisper.Tuning()
+        if let b = num("--beam") { tuning.beamSize = Int(b) }
+        if let p = num("--vad-pad") { tuning.vadPadMs = Int(p) }
+        if let m = num("--vad-silence") { tuning.vadMinSilenceMs = Int(m) }
+        print("정확도: beam=\(tuning.beamSize.map(String.init) ?? "greedy") vad_pad=\(tuning.vadPadMs ?? 30) vad_silence=\(tuning.vadMinSilenceMs ?? 100)")
         let segments = try Whisper.transcribe(audio: audio, model: model, language: lang,
-                                              guards: guards, vadModel: vad)
+                                              guards: guards, tuning: tuning, vadModel: vad)
         let took = Date().timeIntervalSince(started)
         let text = segments.map(\.text).joined(separator: " ")
         print("OK \(String(format: "%.1f", took))초, 구간 \(segments.count)개, 글자 \(text.count)")
