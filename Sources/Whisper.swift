@@ -89,6 +89,18 @@ enum Whisper {
         var vadPadMs: Int? = nil
         /// 이만큼 조용해야 말이 끝난 것으로 본다(ms). nil 이면 기본값(100ms).
         var vadMinSilenceMs: Int? = nil
+        /// 앞에서 받아 적은 글을 다음 창의 힌트로 몇 토큰까지 넘길지. nil 이면 whisper.cpp 기본값(16384).
+        ///
+        /// ⚠️ **0 이 기본이다**(2026-10-08). 70분 대면 회의가 처음 37분 동안 "- 네. - 그는 - 네." 꼴에
+        ///    갇혔다. 회의 전 잡담(여러 사람이 짧게 주고받음)을 대시 꼴로 받아 적고, 그 글이 다음 창의
+        ///    힌트로 넘어가 같은 꼴을 끝까지 끌고 갔다. 같은 모델로 11분 30초부터 잘라 받아쓰면 멀쩡했다.
+        ///
+        ///        기본(16384)  대시 1,434개  "네." 302개  120초
+        ///        0           대시   126개  "네." 119개   81초
+        ///
+        ///    `no_context` 로는 안 막힌다 — 그건 whisper 를 **부를 때** 이전 호출의 글을 버릴 뿐이고,
+        ///    한 녹음 안에서 창끼리 넘기는 건 그대로다. 10-02 에 "효과 0" 이었던 까닭이 이것이다.
+        var maxTextContext: Int? = 0
         static let `default` = Tuning()
     }
 
@@ -114,6 +126,7 @@ enum Whisper {
         var params = whisper_full_default_params(tuning.beamSize == nil ? WHISPER_SAMPLING_GREEDY
                                                                          : WHISPER_SAMPLING_BEAM_SEARCH)
         if let beam = tuning.beamSize { params.beam_search.beam_size = Int32(beam) }
+        if let ctx = tuning.maxTextContext { params.n_max_text_ctx = Int32(ctx) }
         params.print_progress = false
         params.print_realtime = false
         params.print_timestamps = false

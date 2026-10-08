@@ -365,6 +365,7 @@ if let i = CommandLine.arguments.firstIndex(of: "--whisper"), i + 1 < CommandLin
         if let b = num("--beam") { tuning.beamSize = Int(b) }
         if let p = num("--vad-pad") { tuning.vadPadMs = Int(p) }
         if let m = num("--vad-silence") { tuning.vadMinSilenceMs = Int(m) }
+        if let c = num("--max-text-ctx") { tuning.maxTextContext = Int(c) }
         print("정확도: beam=\(tuning.beamSize.map(String.init) ?? "greedy") vad_pad=\(tuning.vadPadMs ?? 30) vad_silence=\(tuning.vadMinSilenceMs ?? 100)")
         let segments = try Whisper.transcribe(audio: audio, model: model, language: lang,
                                               guards: guards, tuning: tuning, vadModel: vad)
