@@ -615,8 +615,13 @@ enum Polisher {
                     let selfCorrected = Self.hasSelfCorrection(raw)
                     // 고친 티가 나는데 길이가 그대로면 베낀 것이다. 그때는 훨씬 오래 기다린다.
                     let copiedBack = selfCorrected && text.count >= raw.count * 9 / 10
+                    // 의문사·부정어가 줄었으면 뜻이 바뀐 것이다. 2026-10-09 에 "왜 그런 식으로 해?"의 "왜"를
+                    // 지워 따지는 말이 "그런 식으로 해."라는 지시가 됐다. Gemini 는 0.5초 뒤에 왔다.
+                    let lost = Self.lostMeaningWords(raw: raw, polished: text)
+                    if !lost.isEmpty { Log.write("온디바이스가 뜻을 바꾸는 말을 뺐다(\(lost.joined(separator: ", "))) — Gemini 를 더 기다린다") }
                     var grace = suspicious ? Prefs.autoGraceSeconds + 3 : Prefs.autoGraceSeconds
                     if selfCorrected { grace = max(grace, copiedBack ? 10 : 6) }
+                    if !lost.isEmpty { grace = max(grace, 10) }
                     // 요약은 온디바이스가 원문 표현을 나누는 데까지만 해서(말 고치기를 못 푼다) Gemini 를 훨씬 오래 기다린다.
                     // "로그인 먼저… 결제는 그다음에. 아니다. 결제 먼저"를 온디바이스는 그대로 베꼈고 Claude 는 풀었다(2026-09-25).
                     if Prefs.style == .summary { grace = max(grace, 12) }   // 재요청(3초 + 응답)까지 기다린다
@@ -640,6 +645,17 @@ enum Polisher {
                 if bothFailed { finish(.failure(error), from: "둘 다 실패") }
             }
         }
+    }
+
+    /// 원문보다 결과에서 개수가 준 의문사·부정어. 이게 빠지면 묻는 말이 지시가 되고 "안 한다"가 "한다"가 된다.
+    ///
+    /// 군말 지우기와 헷갈리지 않는 말만 센다. "아니"는 넣지 않는다 — 문장 첫머리 "아니"는 군말로 지워도 된다.
+    static func lostMeaningWords(raw: String, polished: String) -> [String] {
+        let words = ["왜", "어떻게", "언제", "어디", "누가", "누구", "몇", "뭘", "무슨", "얼마",
+                     "안 ", "못 ", "않", "없", "말고", "아닌"]
+        func count(_ w: String, in text: String) -> Int { text.components(separatedBy: w).count - 1 }
+        return words.filter { count($0, in: polished) < count($0, in: raw) }
+            .map { $0.trimmingCharacters(in: .whitespaces) }
     }
 
     /// 말하다 스스로 고친 흔적이 있나. 3B 온디바이스가 못 푸는 대목이라 클라우드를 더 기다리는 데 쓴다.
