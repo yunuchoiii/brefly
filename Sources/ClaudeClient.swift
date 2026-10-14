@@ -73,7 +73,7 @@ enum Prompts {
             text += "\n\n화자와 용어 (받아쓰기가 잘못 들은 단어를 이 문맥으로 바로잡는다):"
             if !speakerLines.isEmpty { text += "\n- 화자: " + speakerLines.joined(separator: " ") }
             if !glossaryLines.isEmpty {
-                text += "\n- 용어 (왼쪽처럼 들렸으면 오른쪽 표기로 고친다. 단어만 있으면 그 표기를 그대로 쓴다. 원문에 이미 영어로 적힌 단어는 목록의 다른 단어로 바꾸지 않는다 — \"Flashlight\"는 \"TestFlight\"가 아니다):\n"
+                text += "\n- 용어 (왼쪽처럼 들렸으면 오른쪽 표기로 고친다. 단어만 있으면 그 표기를 그대로 쓴다. 원문에 이미 영어로 적힌 단어는 목록의 다른 단어로 바꾸지 않는다 — \"Flashlight\"는 \"TestFlight\"가 아니다. 왼쪽 말과 소리가 거의 같을 때만 바꾼다. 비슷한 말이 목록에 없으면 원문 그대로 둔다 — 낯선 말을 목록의 아무 단어에나 맞추지 않는다):\n"
                     + glossaryLines.map { "  " + $0 }.joined(separator: "\n")
             }
         }
