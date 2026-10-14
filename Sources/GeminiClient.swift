@@ -58,6 +58,8 @@ struct GeminiClient {
         private var finished = 0
         private var done = false
         private var lastError: Error?
+        /// 답은 왔는데 뜻을 바꾸는 말(왜·안…)을 빠뜨린 것이 있었는가. 다른 모델이 다 실패하면 원문을 넣는다.
+        private var sawLossy = false
         private let startedAt = Date()
 
         init(client: GeminiClient, raw: String, chain: [String], style: PolishStyle,
@@ -88,18 +90,42 @@ struct GeminiClient {
                 lock.lock()
                 finished += 1
                 if done { lock.unlock(); return }
+                // ⚠️ 먼저 온 답이라도 의문사·부정어를 빠뜨렸으면 쓰지 않는다. 가장 빨리 오는 flash-lite 가
+                //    "왜 PC랑 생긴 게 달라?"를 "PC와 생긴 게 달라."로 바꿨다(2026-10-14). 다음 모델을 기다리고,
+                //    모두 그러면 원문을 넣는다 — 군말이 남는 게 뜻이 바뀌는 것보다 낫다.
+                //    요약 스타일은 원래 말을 덜어 내므로 보지 않는다.
+                var lostWords: [String] = []
+                if case .success(let text) = result, style != .summary {
+                    lostWords = Polisher.lostMeaningWords(raw: raw, polished: text)
+                }
                 switch result {
-                case .success:
+                case .success where lostWords.isEmpty:
                     done = true
                     lock.unlock()
                     if index > 0 { Log.write("Gemini: \(chain[0]) 대신 \(model) 응답 채택") }
                     completion(result)
+                case .success:
+                    sawLossy = true
+                    let exhausted = started >= chain.count && finished >= started
+                    if exhausted { done = true }
+                    lock.unlock()
+                    Log.write("Gemini \(model) 답이 뜻을 바꾸는 말을 뺐다(\(lostWords.joined(separator: ", "))) — 쓰지 않는다")
+                    if exhausted {
+                        Log.write("Gemini 모든 답이 뜻을 바꿔 원문을 넣는다")
+                        completion(.success(raw))
+                    } else {
+                        fireNext()
+                    }
                 case .failure(let error):
                     lastError = error
                     let exhausted = started >= chain.count && finished >= started
                     if exhausted { done = true }
+                    let lossyBefore = sawLossy
                     lock.unlock()
-                    if exhausted {
+                    if exhausted && lossyBefore {
+                        Log.write("Gemini 모든 답이 뜻을 바꿨거나 실패해 원문을 넣는다")
+                        completion(.success(raw))
+                    } else if exhausted {
                         completion(.failure(error))
                     } else {
                         // 일시 오류든 아니든 이 모델은 글렀으니 다음 모델을 바로 쏜다.
