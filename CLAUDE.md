@@ -15,7 +15,10 @@ git 규칙(브랜치·커밋·PR)은 전역 `git-workflow` 스킬을 따른다. 
     분야 용어 목록 오용). 다시 열면 이것부터 PR.
   - `feature/diarization` — 위 수정 + 화자 분리(FluidAudio), 끊긴 회의록 이어서 만들기, 장치 변경 시 이어 녹음,
     긴 회의 받아쓰기가 "- 네." 꼴에 갇히던 버그(`n_max_text_ctx = 0`), 회의록 지시문 개선. 미릴리스.
-- 다시 열 때: 저장소를 public 으로 돌리고, brefly-pages 의 Pages 를 다시 켠 뒤 appcast 가 뜨는지 curl 로 확인한다.
+- brefly-pages 의 매일 배포 워크플로("Deploy GitHub Pages", schedule)를 2026-10-17 에 껐다. private 이라 Pages 가
+  꺼져 10-15 부터 매일 실패 메일이 왔다.
+- 다시 열 때: 저장소를 public 으로 돌리고, brefly-pages 의 Pages 와 위 워크플로를 다시 켠 뒤
+  (`gh workflow enable "Deploy GitHub Pages" -R yunuchoiii/brefly-pages`) appcast 가 뜨는지 curl 로 확인한다.
 
 ## 지금 상태 (2026-09-25)
 
