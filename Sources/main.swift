@@ -454,6 +454,12 @@ if let i = CommandLine.arguments.firstIndex(of: "--transcribe"), i + 1 < Command
     exit(0)
 }
 
+// 진단용: 클라우드 모델에 넘어가는 시스템 지시 전체를 찍는다(`--prompt` 는 요청문만 찍는다).
+if CommandLine.arguments.contains("--system-prompt") {
+    print(Prompts.system(for: Prefs.style))
+    exit(0)
+}
+
 // 진단용: 다듬은 결과가 뜻을 바꾸는 말을 뺐거나 지시문의 말을 베껴 넣었는지 본다. 모델은 안 부른다.
 //   Brefly --check-polish "원문" "결과"
 if let i = CommandLine.arguments.firstIndex(of: "--check-polish"), i + 2 < CommandLine.arguments.count {
