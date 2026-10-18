@@ -86,6 +86,11 @@ enum Whisper {
         params.n_threads = threads
         // 진행 표시를 끄지 않으면 whisper.cpp 가 stderr 로 줄줄이 찍는다.
         params.no_timestamps = false
+        // ⚠️ 앞에서 받아 적은 글을 다음 창의 힌트로 넘기지 않는다. 70분 대면 회의(2026-10-08)가 회의 전
+        //    잡담을 "- 네. - 그는 -" 꼴로 받아 적고, 그 글이 힌트로 넘어가 처음 37분 내내 같은 꼴에 갇혔다.
+        //    같은 모델로 중간부터 잘라 받아쓰면 멀쩡했다. `no_context` 로는 안 막힌다 — 그건 이전 **호출**의
+        //    글만 버리고, 한 녹음 안에서 창끼리 넘기는 건 그대로다.
+        params.n_max_text_ctx = 0
 
         // 멈추라는 표를 C 쪽에 넘긴다. whisper 는 창을 하나 끝낼 때마다 물어본다.
         if let cancel {
