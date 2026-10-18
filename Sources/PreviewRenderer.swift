@@ -274,6 +274,7 @@ enum PreviewRenderer {
         wizard("W2-speech-granted-dictation-unknown") { $0.step = .speech; $0.speech = .granted; $0.dictationEnabled = nil }
         wizard("W2-speech-done") { $0.step = .speech; $0.speech = .granted; $0.dictationEnabled = true }
         wizard("W3-model-A") { $0.step = .model }
+        wizard("W3-model-A-gemini-open") { $0.step = .model; $0.geminiExpanded = true }
         wizard("W3-model-B-empty", apple: .unsupportedOS) { $0.step = .model }
         wizard("W3-model-B-verified", apple: .unsupportedOS) { $0.step = .model; $0.keyVerified = true }
         wizard("W3-model-C-not-enabled", apple: .notEnabled) { $0.step = .model }
