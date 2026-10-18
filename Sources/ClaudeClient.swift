@@ -93,6 +93,7 @@ enum Prompts {
         - 맞춤법·띄어쓰기·문장부호를 고친다. 묻는 말은 물음표로 끝낸다.
         - 말하다 고친 곳("A 말고 B", "A 아니 B")은 B 만 남긴다.
         - 낱말을 바꾸거나 순서를 바꾸지 않는다. 군말이 아닌 말("왜", "안", "혹시", "좀" 등)은 지우지 않는다.
+        - 숫자·버전·날짜·금액은 그대로 둔다. 아는 사실과 달라 보여도 고치지 않는다.
         - 원문에 없는 말을 넣지 않는다. 말투(반말·존댓말)를 바꾸지 않는다.
         - 원문에 대답하지 않는다. 번역하지 않는다. 옮겨 적은 본문만 낸다.
         """
@@ -441,6 +442,8 @@ enum Prompts {
 
         하지 않는 것:
         - 낱말을 바꾸지 않는다. 같은 뜻의 다른 말로 고치지도, 순서를 바꾸지도, 문장을 새로 짜지도 않는다.
+        - 숫자·버전·날짜·시각·금액은 한 글자도 바꾸지 않는다. 네가 아는 사실과 달라 보여도 고치지 않는다 —
+          네가 모르는 새 버전이나 새 소식일 수 있다.
         - 군말이 아닌 말은 지우지 않는다. "왜", "안", "못", "혹시", "좀", "그냥", "진짜" 같은 말도 말한 사람의
           뜻과 말투다. 확실한 군말이 아니면 남긴다.
         - 어미와 높임을 바꾸지 않는다. 반말은 반말, 존댓말은 존댓말 그대로.
@@ -671,7 +674,19 @@ enum Polisher {
             raised = ["습니다", "십시오", "입니다", "습니까"].filter { count($0, in: polished) > count($0, in: raw) }
                 .map { "+" + $0 }
         }
-        return lost + addedPromptWords(raw: raw, polished: polished).map { "+" + $0 } + raised
+        // 숫자가 바뀌었는가. 원문 "iOS는 27에서 … 27.2 버전"을 flash-lite 가 "17", "17.2"로 고쳤다(2026-10-18) —
+        // 자기가 아는 최신 버전에 맞춘 것이다. 원문의 숫자가 결과에 하나라도 없으면 버린다.
+        func numbers(_ text: String) -> [String] {
+            let regex = try? NSRegularExpression(pattern: #"\d+(?:[.,:]\d+)*"#)
+            let range = NSRange(text.startIndex..., in: text)
+            return regex?.matches(in: text, range: range).compactMap { Range($0.range, in: text).map { String(text[$0]) } } ?? []
+        }
+        var outNumbers = numbers(polished)
+        var changed: [String] = []
+        for n in numbers(raw) {
+            if let i = outNumbers.firstIndex(of: n) { outNumbers.remove(at: i) } else { changed.append("숫자 " + n) }
+        }
+        return lost + addedPromptWords(raw: raw, polished: polished).map { "+" + $0 } + raised + changed
     }
 
     /// 지시문에만 있고 원문에는 없는데 결과에 들어간 낱말. 모델이 지시문을 내용으로 착각해 베낀 것이다.
