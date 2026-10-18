@@ -808,7 +808,12 @@ private struct ModelStep: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                if model.geminiExpanded { keyField }
+                if model.geminiExpanded {
+                    // ⚠️ 이 갈래에만 발급 페이지로 가는 길이 없었다. 키 칸만 펼쳐져서 "키를 어디서 받지?"에서
+                    //    막혔다(2026-10-18 사용자 지적). 줄을 하나 더 두면 560×440 을 넘어 머리가 잘려서,
+                    //    키 칸 옆에 버튼을 붙인다.
+                    keyField(issueButton: true)
+                }
             } else if model.appleStatus.canBecomeAvailable {
                 // C: 켤 수 있는데 꺼져 있거나 내려받는 중 — 가장 쉬운 길을 먼저 보여 준다
                 StepTitle("받아 적은 글을 정리할 AI 를 고릅니다")
@@ -882,7 +887,9 @@ private struct ModelStep: View {
         .padding(.vertical, 18).padding(.horizontal, 36)
     }
 
-    @ViewBuilder private var keyField: some View {
+    @ViewBuilder private var keyField: some View { keyField(issueButton: false) }
+
+    @ViewBuilder private func keyField(issueButton: Bool) -> some View {
         if model.keyVerified {
             HStack(spacing: 8) {
                 Text(model.maskedKey)
@@ -913,6 +920,11 @@ private struct ModelStep: View {
                         RequestingButton("확인 중…", small: true)
                     } else {
                         WizardButton("확인", style: .outline, small: true) { model.verifyKey() }
+                    }
+                    if issueButton {
+                        WizardButton("키 받기", style: .primary, small: true) {
+                            if let u = URL(string: "https://aistudio.google.com/apikey") { NSWorkspace.shared.open(u) }
+                        }
                     }
                 }
                 if !model.keyError.isEmpty {
