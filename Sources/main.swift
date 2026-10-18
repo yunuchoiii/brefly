@@ -454,6 +454,14 @@ if let i = CommandLine.arguments.firstIndex(of: "--transcribe"), i + 1 < Command
     exit(0)
 }
 
+// 진단용: 다듬은 결과가 뜻을 바꾸는 말을 뺐거나 지시문의 말을 베껴 넣었는지 본다. 모델은 안 부른다.
+//   Brefly --check-polish "원문" "결과"
+if let i = CommandLine.arguments.firstIndex(of: "--check-polish"), i + 2 < CommandLine.arguments.count {
+    let found = Polisher.lostMeaningWords(raw: CommandLine.arguments[i + 1], polished: CommandLine.arguments[i + 2])
+    print(found.isEmpty ? "통과" : "걸림: " + found.joined(separator: ", "))
+    exit(0)
+}
+
 if let i = CommandLine.arguments.firstIndex(of: "--polish"), i + 1 < CommandLine.arguments.count {
     let done = DispatchSemaphore(value: 0)
     let started = Date()
